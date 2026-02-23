@@ -223,9 +223,9 @@ export default function SegurMapApp() {
       <header className="bg-white/90 backdrop-blur-xl border-b border-slate-200 px-4 md:px-8 py-3 sticky top-0 z-40 shadow-sm">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#e30613] rounded-full flex items-center justify-center text-white shadow-lg shadow-red-200 shrink-0">
-              <span className="text-xl font-black select-none">M</span>
-            </div>
+<div className="shrink-0">
+  <img src="/logo.png" alt="Logo MAQ" className="h-10 w-auto object-contain" />
+</div>
             <div>
               <h1 className="text-base md:text-xl font-black tracking-tight text-slate-800 leading-none">SegurMap MAQ</h1>
               <p className="text-[9px] uppercase font-black text-[#e30613] tracking-[0.2em]">Comisión Seguridad</p>
