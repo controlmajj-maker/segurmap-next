@@ -1,26 +1,26 @@
 import { NextResponse } from "next/server";
-import { sql } from "../../../lib/db";
+import pool from "@/lib/db";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const inspectionId = searchParams.get("inspectionId");
+  const inspection_id = searchParams.get("inspection_id");
 
-  const findings = await sql`
-    SELECT * FROM findings
-    WHERE inspection_id = ${inspectionId}
-  `;
+  const result = await pool.query(
+    "SELECT * FROM findings WHERE inspection_id = $1 ORDER BY created_at DESC",
+    [inspection_id]
+  );
 
-  return NextResponse.json(findings);
+  return NextResponse.json(result.rows);
 }
 
 export async function POST(req: Request) {
-  const body = await req.json();
+  const { inspection_id, title, description, evidence_url } =
+    await req.json();
 
-  const result = await sql`
-    INSERT INTO findings (inspection_id, title, description, evidence_url)
-    VALUES (${body.inspectionId}, ${body.title}, ${body.description}, ${body.evidenceUrl})
-    RETURNING *
-  `;
+  const result = await pool.query(
+    "INSERT INTO findings (inspection_id, title, description, evidence_url) VALUES ($1, $2, $3, $4) RETURNING *",
+    [inspection_id, title, description, evidence_url]
+  );
 
-  return NextResponse.json(result[0]);
+  return NextResponse.json(result.rows[0]);
 }
