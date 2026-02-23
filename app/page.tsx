@@ -109,7 +109,6 @@ export default function SegurMapApp() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [backgroundImage, setBackgroundImage] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(true);
-  const [inspectorName, setInspectorName] = useState("Administrador de Seguridad");
   const [showNewInspectionModal, setShowNewInspectionModal] = useState(false);
   const bgInputRef = useRef<HTMLInputElement>(null);
 
@@ -122,10 +121,16 @@ export default function SegurMapApp() {
         fetch("/api/inspections"),
         fetch("/api/findings"),
       ]);
-      const insData: Inspection[] = await insRes.json();
+      const insData: any[] = await insRes.json();
       const finData: Finding[] = await finRes.json();
-      setInspections(Array.isArray(insData) ? insData : []);
-      setAllFindings(Array.isArray(finData) ? finData : []);
+      const inspList = Array.isArray(insData) ? insData : [];
+      const finList = Array.isArray(finData) ? finData : [];
+      setInspections(inspList);
+      setAllFindings(finList);
+      // Restore zone colors from last inspection
+      if (inspList.length > 0 && inspList[0].zones_data) {
+        setZones(inspList[0].zones_data);
+      }
     } catch (e) { console.error(e); }
     setIsLoading(false);
   }
@@ -138,10 +143,10 @@ export default function SegurMapApp() {
     });
     const newInsp: Inspection = await res.json();
     setCurrentInspection(newInsp);
-    setZones(INITIAL_ZONES.map(z => ({ ...z, status: "PENDING", findings: {} })));
+    const freshZones = INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} }));
+    setZones(freshZones);
     setIsInspectionActive(true);
     setShowNewInspectionModal(false);
-    setInspectorName(inspector);
     loadData();
   }
 
@@ -151,9 +156,8 @@ export default function SegurMapApp() {
     checklistResults: Record<string, boolean>,
     findings: Record<string, Finding>
   ) {
-    // Save each finding to the DB
-    for (const [itemId, finding] of Object.entries(findings)) {
-      if (!finding.id.startsWith("local_")) continue; // already saved
+    for (const [, finding] of Object.entries(findings)) {
+      if (!finding.id.startsWith("local_")) continue;
       await fetch("/api/findings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -167,26 +171,30 @@ export default function SegurMapApp() {
         }),
       });
     }
-    setZones(prev => prev.map(z =>
+    const updatedZones = zones.map(z =>
       z.id === zoneId ? { ...z, status, checklistResults, findings } : z
-    ));
+    );
+    setZones(updatedZones);
+    // Persist zone colors to DB
+    await fetch("/api/inspections", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: currentInspection!.id, zones_data: updatedZones }),
+    });
     loadData();
   }
 
   async function handleFinishInspection() {
     if (!currentInspection) return;
     setIsFinishing(true);
-    // Generate a simple summary
     const issueZones = zones.filter(z => z.status === "ISSUE");
     const okZones = zones.filter(z => z.status === "OK");
-    const summary = `Inspección completada. ${okZones.length} zonas sin hallazgos. ${issueZones.length} zonas con hallazgos que requieren atención.`;
-
+    const summary = `Inspección completada el ${new Date().toLocaleDateString()}. ${okZones.length} zonas sin hallazgos. ${issueZones.length} zonas con hallazgos que requieren atención.`;
     await fetch("/api/inspections", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: currentInspection.id, summary }),
+      body: JSON.stringify({ id: currentInspection.id, summary, zones_data: zones }),
     });
-
     setIsInspectionActive(false);
     setCurrentInspection(null);
     setIsFinishing(false);
@@ -223,9 +231,9 @@ export default function SegurMapApp() {
       <header className="bg-white/90 backdrop-blur-xl border-b border-slate-200 px-4 md:px-8 py-3 sticky top-0 z-40 shadow-sm">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-<div className="shrink-0">
-  <img src="/logo.png" alt="Logo MAQ" className="h-10 w-auto object-contain" />
-</div>
+            <div className="w-10 h-10 bg-[#e30613] rounded-full flex items-center justify-center text-white shadow-lg shadow-red-200 shrink-0">
+              <span className="text-xl font-black select-none">M</span>
+            </div>
             <div>
               <h1 className="text-base md:text-xl font-black tracking-tight text-slate-800 leading-none">SegurMap MAQ</h1>
               <p className="text-[9px] uppercase font-black text-[#e30613] tracking-[0.2em]">Comisión Seguridad</p>
@@ -341,7 +349,7 @@ export default function SegurMapApp() {
                     {isInspectionActive
                       ? `${pendingZones} áreas pendientes`
                       : lastInspection
-                        ? `Última: ${new Date(lastInspection.created_at).toLocaleDateString()}`
+                        ? `${new Date(lastInspection.created_at).toLocaleDateString()} · ${lastInspection.inspector}`
                         : "Sin inspecciones previas"}
                   </p>
                 </div>
