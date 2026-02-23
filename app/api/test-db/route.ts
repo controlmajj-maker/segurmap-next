@@ -1,5 +1,9 @@
-import pool from "@/lib/db";
+import { Pool } from "pg";
 import { NextResponse } from "next/server";
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
 export async function GET() {
   try {
