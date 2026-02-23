@@ -791,7 +791,7 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
           existing={findings[itemToReport.id]}
           onSave={async (finding) => {
             setResults(prev => ({ ...prev, [itemToReport.id]: false }));
-            setFindings(prev => ({ ...prev, [itemToReport.id]: { ...finding, id: `local_${Date.now()}` } }));
+            setFindings(prev => ({ ...prev, [itemToReport.id]: { ...finding, id: `local_${Date.now()}`, created_at: new Date().toISOString() } as Finding }));
             setItemToReport(null);
           }}
           onClear={() => {
