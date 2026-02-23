@@ -13,6 +13,7 @@ interface Finding {
   id: string;
   inspection_id: string;
   zone_id?: string;
+  zone_name?: string;
   item_id?: string;
   item_label: string;
   description: string;
@@ -23,7 +24,6 @@ interface Finding {
   corrective_actions?: string;
   closed_at?: string;
   created_at: string;
-  // UI extras
   zoneName?: string;
 }
 
@@ -152,6 +152,7 @@ export default function SegurMapApp() {
 
   async function handleZoneSave(
     zoneId: string,
+    zoneName: string,
     status: ZoneStatus,
     checklistResults: Record<string, boolean>,
     findings: Record<string, Finding>
@@ -163,6 +164,8 @@ export default function SegurMapApp() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           inspection_id: currentInspection!.id,
+          zone_id: zoneId,
+          zone_name: zoneName,
           item_label: finding.item_label,
           description: finding.description,
           severity: finding.severity,
@@ -212,7 +215,7 @@ export default function SegurMapApp() {
     loadData();
   }
 
-  const activeFindings = allFindings.filter(f => !f.is_closed);
+  const activeFindings = allFindings.filter(f => f.is_closed === false || f.is_closed as any === "false" || !f.is_closed);
   const pendingZones = zones.filter(z => z.status === "PENDING").length;
   const lastInspection = inspections.length > 0 ? inspections[0] : null;
 
@@ -427,12 +430,19 @@ export default function SegurMapApp() {
                   <div key={f.id} className="bg-white rounded-2xl shadow-lg border border-slate-100 overflow-hidden flex flex-col">
                     <div className="p-4 bg-red-50 border-b border-red-100 flex justify-between items-start">
                       <div>
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full text-white ${
-                          f.severity === "high" ? "bg-red-600" : f.severity === "medium" ? "bg-orange-500" : "bg-yellow-500"
-                        }`}>{f.severity === "high" ? "ALTA" : f.severity === "medium" ? "MEDIA" : "BAJA"}</span>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full text-white ${
+                            f.severity === "high" ? "bg-red-600" : f.severity === "medium" ? "bg-orange-500" : "bg-yellow-500"
+                          }`}>{f.severity === "high" ? "ALTA" : f.severity === "medium" ? "MEDIA" : "BAJA"}</span>
+                          {(f as any).zone_name && (
+                            <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
+                              📍 {(f as any).zone_name}
+                            </span>
+                          )}
+                        </div>
                         <h4 className="font-black text-slate-800 mt-1 text-sm">{f.item_label}</h4>
                       </div>
-                      <span className="text-[9px] text-slate-400 font-bold">{new Date(f.created_at).toLocaleDateString()}</span>
+                      <span className="text-[9px] text-slate-400 font-bold shrink-0 ml-2">{new Date(f.created_at).toLocaleDateString()}</span>
                     </div>
                     {f.photo_url && (
                       <div className="cursor-zoom-in" onClick={() => setZoomImage(f.photo_url!)}>
@@ -527,13 +537,28 @@ export default function SegurMapApp() {
                                 }`}
                               >
                                 <div className="flex justify-between items-start mb-2">
-                                  <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full text-white ${f.is_closed ? "bg-green-600" : "bg-red-600"}`}>
-                                    {f.is_closed ? "RESUELTO" : "PENDIENTE"}
-                                  </span>
-                                  <span className="text-[8px] text-slate-400">{new Date(f.created_at).toLocaleDateString()}</span>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full text-white ${f.is_closed ? "bg-green-600" : "bg-red-600"}`}>
+                                      {f.is_closed ? "RESUELTO" : "PENDIENTE"}
+                                    </span>
+                                    {f.zone_name && (
+                                      <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">
+                                        📍 {f.zone_name}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[8px] text-slate-400 shrink-0">{new Date(f.created_at).toLocaleDateString()}</span>
                                 </div>
+                                {f.photo_url && (
+                                  <div className="mb-2 rounded-lg overflow-hidden">
+                                    <img src={f.photo_url} alt="Evidencia" className="w-full h-24 object-cover" />
+                                  </div>
+                                )}
                                 <p className="font-black text-slate-800 text-xs truncate">{f.item_label}</p>
                                 <p className="text-slate-500 text-[10px] italic truncate">"{f.description}"</p>
+                                {f.is_closed && f.corrective_actions && (
+                                  <p className="text-green-700 text-[9px] mt-1 font-bold truncate">✓ {f.corrective_actions}</p>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -697,7 +722,7 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
   zone: Zone;
   inspectionId: string;
   onClose: () => void;
-  onSave: (zoneId: string, status: ZoneStatus, checklistResults: Record<string, boolean>, findings: Record<string, Finding>) => void;
+  onSave: (zoneId: string, zoneName: string, status: ZoneStatus, checklistResults: Record<string, boolean>, findings: Record<string, Finding>) => void;
 }) {
   const [results, setResults] = useState<Record<string, boolean>>(zone.checklistResults || {});
   const [findings, setFindings] = useState<Record<string, Finding>>(zone.findings || {});
@@ -718,7 +743,7 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
   const handleConfirm = async () => {
     setIsSaving(true);
     const status: ZoneStatus = hasAnyFail ? "ISSUE" : "OK";
-    await onSave(zone.id, status, results, findings);
+    await onSave(zone.id, zone.name, status, results, findings);
     setIsSaving(false);
     onClose();
   };
