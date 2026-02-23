@@ -17,12 +17,5 @@
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
 
-"devDependencies": {
-  "typescript": "^5.4.5",
-  "@types/react": "^18.2.66",
-  "@types/node": "^20.11.30"
-}
-
-
-  
+ 
 }
