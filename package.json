@@ -1,0 +1,17 @@
+{
+  "name": "segurmap-next",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "14.2.3",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "pg": "^8.11.5",
+    "uuid": "^9.0.1",
+    "@vercel/blob": "^0.23.0"
+  }
+}
