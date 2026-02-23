@@ -44,39 +44,44 @@ export default function Home() {
     loadInspections();
   }
 
-  async function createFinding() {
-    if (!selectedInspection) return;
+async function createFinding() {
+  if (!selectedInspection) return;
 
-    let evidence_url = null;
+  let photo_url = null;
 
-    if (file) {
-      const formData = new FormData();
-      formData.append("file", file);
-      const uploadRes = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-      const uploadData = await uploadRes.json();
-      evidence_url = uploadData.url;
-    }
-
-    await fetch("/api/findings", {
+  if (file) {
+    const formData = new FormData();
+    formData.append("file", file);
+    const uploadRes = await fetch("/api/upload", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        inspection_id: selectedInspection.id,
-        title: findingTitle,
-        description: findingDescription,
-        evidence_url,
-      }),
+      body: formData,
     });
-
-    setFindingTitle("");
-    setFindingDescription("");
-    setFile(null);
-
-    loadFindings(selectedInspection.id);
+    const uploadData = await uploadRes.json();
+    photo_url = uploadData.url;
   }
+
+  await fetch("/api/findings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      inspection_id: selectedInspection.id,
+      item_label: findingTitle,
+      description: findingDescription,
+      photo_url,
+    }),
+  });
+
+  setFindingTitle("");
+  setFindingDescription("");
+  setFile(null);
+
+  loadFindings(selectedInspection.id);
+}
+
+
+
+
+  
 
   return (
     <div style={{ padding: 40 }}>
