@@ -368,8 +368,8 @@ export default function SegurMapApp() {
               <img src="/logo.png" alt="Logo MAQ" className="h-10 w-auto object-contain" />
             </div>
             <div>
-              <h1 className="text-base md:text-xl font-black tracking-tight text-slate-800 leading-none">SegurMap MAQ</h1>
-              <p className="text-[9px] uppercase font-black text-[#e30613] tracking-[0.2em]">Comisión Seguridad</p>
+              <h1 className="text-base md:text-xl font-black tracking-tight text-slate-800 leading-none">Recorridos en planta MAQ</h1>
+              <p className="text-[9px] uppercase font-black text-[#e30613] tracking-[0.2em]">Comisión de Seguridad</p>
             </div>
           </div>
 
@@ -483,7 +483,7 @@ export default function SegurMapApp() {
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
                 <div>
                   <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">
-                    {isInspectionActive ? "Inspección Activa" : "Estado del Sitio"}
+                    {isInspectionActive ? "Inspección Activa" : "Estado actual de la planta"}
                   </h2>
                   <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">
                     {isInspectionActive
@@ -539,6 +539,95 @@ export default function SegurMapApp() {
                 </button>
               </div>
             )}
+
+            {/* ── ÚLTIMA INSPECCIÓN EN PANTALLA PRINCIPAL ── */}
+            {!isInspectionActive && (() => {
+              const lastCompleted = inspections.find((i: any) => !i.is_active);
+              if (!lastCompleted) return null;
+              const inspFindings = allFindings.filter(f => f.inspection_id === lastCompleted.id);
+              const closedCount = inspFindings.filter(f => f.is_closed === true || (f as any).is_closed === "true").length;
+              const openCount = inspFindings.filter(f => f.is_closed !== true && (f as any).is_closed !== "true").length;
+              return (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                  <div className="p-4 md:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-4">
+                      <div className="bg-slate-900 w-12 h-12 rounded-2xl flex flex-col items-center justify-center text-white shrink-0">
+                        <span className="text-[9px] font-black uppercase opacity-50">
+                          {new Date(lastCompleted.created_at).toLocaleString("default", { month: "short" })}
+                        </span>
+                        <span className="text-lg font-black leading-none">{new Date(lastCompleted.created_at).getDate()}</span>
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Última Inspección</p>
+                        <h3 className="font-black text-slate-800 text-base">{lastCompleted.title}</h3>
+                        <p className="text-xs text-slate-400 font-bold uppercase">{lastCompleted.inspector} · {lastCompleted.location}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {openCount > 0 && (
+                        <span className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-black uppercase">{openCount} ABIERTOS</span>
+                      )}
+                      {closedCount > 0 && (
+                        <span className="px-3 py-1 bg-green-50 text-green-600 rounded-lg text-[9px] font-black uppercase">{closedCount} CERRADOS</span>
+                      )}
+                      {inspFindings.length === 0 && (
+                        <span className="px-3 py-1 bg-slate-50 text-slate-400 rounded-lg text-[9px] font-black uppercase">SIN HALLAZGOS</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="px-4 md:px-6 pb-6 pt-4 space-y-4">
+                    {lastCompleted.summary && (
+                      <div className="bg-slate-900 rounded-2xl p-5 text-white">
+                        <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-2">🤖 Resumen Ejecutivo IA</p>
+                        <p className="text-sm text-slate-300 leading-relaxed">{lastCompleted.summary}</p>
+                      </div>
+                    )}
+
+                    {inspFindings.length === 0 ? (
+                      <p className="text-slate-400 text-sm text-center py-4">Sin hallazgos registrados</p>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {inspFindings.map(f => {
+                          const isClosed = f.is_closed === true || (f as any).is_closed === "true";
+                          return (
+                            <div
+                              key={f.id}
+                              onClick={() => setViewFinding(f)}
+                              className={`rounded-xl border-2 cursor-pointer hover:scale-[1.01] transition-all overflow-hidden ${
+                                isClosed ? "bg-green-50/50 border-green-100" : "bg-red-50/50 border-red-100"
+                              }`}
+                            >
+                              {f.photo_url && (
+                                <img src={f.photo_url} alt="Evidencia" className="w-full h-28 object-cover" />
+                              )}
+                              <div className="p-3">
+                                <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+                                  <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full text-white ${isClosed ? "bg-green-600" : "bg-red-600"}`}>
+                                    {isClosed ? "RESUELTO" : "PENDIENTE"}
+                                  </span>
+                                  {f.zone_name && (
+                                    <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-700 text-white">
+                                      📍 {f.zone_name}
+                                    </span>
+                                  )}
+                                  <span className="text-[8px] text-slate-400 ml-auto">{new Date(f.created_at).toLocaleDateString()}</span>
+                                </div>
+                                <p className="font-black text-slate-800 text-xs truncate">{f.item_label}</p>
+                                <p className="text-slate-500 text-[10px] italic truncate">"{f.description}"</p>
+                                {isClosed && f.corrective_actions && (
+                                  <p className="text-green-700 text-[9px] mt-1 font-bold truncate">✓ {f.corrective_actions}</p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
