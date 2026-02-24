@@ -131,6 +131,7 @@ export default function SegurMapApp() {
   const [isLoading, setIsLoading] = useState(true);
   const [showNewInspectionModal, setShowNewInspectionModal] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const bgInputRef = useRef<HTMLInputElement>(null);
 
   const loadData = useCallback(async () => {
@@ -140,19 +141,33 @@ export default function SegurMapApp() {
         fetch("/api/inspections"),
         fetch("/api/findings"),
       ]);
-      const insData: Inspection[] = await insRes.json();
+      const insData: any[] = await insRes.json();
       const finData: Finding[] = await finRes.json();
       const inspList = Array.isArray(insData) ? insData : [];
       const finList = Array.isArray(finData) ? finData : [];
       setInspections(inspList);
       setAllFindings(finList);
-      // Only restore zones if no active inspection (avoids overwriting in-progress zones)
-      if (!isInspectionActive && inspList.length > 0 && inspList[0].zones_data) {
-        setZones(inspList[0].zones_data);
+
+      // Check if there's an active inspection in DB — restore it on any device
+      const activeInsp = inspList.find((i: any) => i.is_active === true);
+      if (activeInsp) {
+        setCurrentInspection(activeInsp);
+        setIsInspectionActive(true);
+        if (activeInsp.zones_data) {
+          setZones(activeInsp.zones_data);
+        } else {
+          setZones(INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
+        }
+      } else {
+        // No active inspection — show last inspection's zone colors
+        setIsInspectionActive(false);
+        setCurrentInspection(null);
+        const completedInsp = inspList.find((i: any) => !i.is_active && i.zones_data);
+        if (completedInsp) setZones(completedInsp.zones_data);
       }
     } catch (e) { console.error(e); }
     setIsLoading(false);
-  }, [isInspectionActive]);
+  }, []);
 
   useEffect(() => { loadData(); }, []); // eslint-disable-line
 
@@ -166,15 +181,46 @@ export default function SegurMapApp() {
     setCurrentInspection(newInsp);
     const freshZones = INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} }));
     setZones(freshZones);
+    // Save initial zones_data to DB so other devices can see the active inspection
+    await fetch("/api/inspections", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: newInsp.id, zones_data: freshZones, is_active: true }),
+    });
     setIsInspectionActive(true);
     setShowNewInspectionModal(false);
-    // Reload inspections list but preserve zones
     const insRes = await fetch("/api/inspections");
     const insData = await insRes.json();
     setInspections(Array.isArray(insData) ? insData : []);
   }
 
-  async function handleZoneSave(
+  async function handleCancelInspection() {
+    if (!currentInspection) {
+      setIsInspectionActive(false);
+      setCurrentInspection(null);
+      setZones(INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
+      setShowCancelConfirm(false);
+      return;
+    }
+    // Delete from DB — no trace left in auditorías
+    await fetch("/api/inspections", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: currentInspection.id }),
+    });
+    setIsInspectionActive(false);
+    setCurrentInspection(null);
+    setZones(INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
+    setShowCancelConfirm(false);
+    // Reload to reflect deletion
+    const [insRes, finRes] = await Promise.all([fetch("/api/inspections"), fetch("/api/findings")]);
+    const insData = await insRes.json();
+    const finData = await finRes.json();
+    const inspList = Array.isArray(insData) ? insData : [];
+    setInspections(inspList);
+    setAllFindings(Array.isArray(finData) ? finData : []);
+    if (inspList.length > 0 && inspList[0].zones_data) setZones(inspList[0].zones_data);
+  }
     zoneId: string,
     zoneName: string,
     status: ZoneStatus,
@@ -251,7 +297,7 @@ export default function SegurMapApp() {
     await fetch("/api/inspections", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: currentInspection.id, summary, zones_data: zones }),
+      body: JSON.stringify({ id: currentInspection.id, summary, zones_data: zones, is_active: false }),
     });
 
     setIsInspectionActive(false);
@@ -457,10 +503,10 @@ export default function SegurMapApp() {
                   </button>
                 ) : (
                   <button
-                    onClick={() => setIsInspectionActive(false)}
-                    className="bg-slate-100 text-slate-500 px-5 py-3 rounded-xl font-black text-xs uppercase tracking-widest"
+                    onClick={() => setShowCancelConfirm(true)}
+                    className="bg-red-50 text-red-600 border-2 border-red-200 px-5 py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-all"
                   >
-                    PAUSAR
+                    CANCELAR RECORRIDO
                   </button>
                 )}
               </div>
@@ -567,12 +613,12 @@ export default function SegurMapApp() {
           <div className="space-y-4">
             <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tight">Historial de Auditorías</h2>
 
-            {inspections.length === 0 ? (
+            {inspections.filter((i: any) => !i.is_active).length === 0 ? (
               <div className="py-20 text-center bg-white rounded-3xl border-2 border-dashed border-slate-100">
                 <p className="text-slate-400 font-black uppercase text-sm">Sin registros previos</p>
               </div>
             ) : (
-              inspections.map(insp => {
+              inspections.filter((i: any) => !i.is_active).map(insp => {
                 const inspFindings = allFindings.filter(f => f.inspection_id === insp.id);
                 const closedCount = inspFindings.filter(f => f.is_closed === true || (f as any).is_closed === "true").length;
                 const openCount = inspFindings.filter(f => f.is_closed !== true && (f as any).is_closed !== "true").length;
@@ -713,6 +759,32 @@ export default function SegurMapApp() {
         >
           <button className="absolute top-4 right-4 w-10 h-10 bg-white/10 text-white rounded-full flex items-center justify-center border border-white/20">✕</button>
           <img src={zoomImage} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" alt="Evidencia Ampliada" />
+        </div>
+      )}
+
+      {showCancelConfirm && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur flex items-center justify-center z-[200] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-red-100 overflow-hidden">
+            <div className="p-6 bg-red-50 border-b text-center">
+              <p className="text-3xl mb-2">⚠️</p>
+              <h3 className="text-xl font-black text-slate-800">¿Cancelar recorrido?</h3>
+              <p className="text-slate-500 text-sm mt-1">Se eliminará la inspección en curso y todos sus hallazgos. Esta acción no se puede deshacer.</p>
+            </div>
+            <div className="p-6 flex gap-3">
+              <button
+                onClick={() => setShowCancelConfirm(false)}
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-600 hover:bg-slate-50 transition-all"
+              >
+                CONTINUAR RECORRIDO
+              </button>
+              <button
+                onClick={handleCancelInspection}
+                className="flex-1 py-3 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 transition-all shadow-lg"
+              >
+                SÍ, CANCELAR
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
