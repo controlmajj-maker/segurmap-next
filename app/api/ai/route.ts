@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { GoogleGenAI } from "@google/genai";
 
 export async function POST(req: Request) {
   try {
@@ -9,26 +10,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
     }
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 300, temperature: 0.4 },
-        }),
-      }
-    );
+    const ai = new GoogleGenAI({ apiKey });
 
-    if (!res.ok) {
-      const err = await res.text();
-      return NextResponse.json({ error: err }, { status: 500 });
-    }
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
 
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    return NextResponse.json({ text });
+    return NextResponse.json({ text: response.text });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
