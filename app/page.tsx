@@ -221,6 +221,8 @@ export default function SegurMapApp() {
     setAllFindings(Array.isArray(finData) ? finData : []);
     if (inspList.length > 0 && inspList[0].zones_data) setZones(inspList[0].zones_data);
   }
+
+  async function handleZoneSave(
     zoneId: string,
     zoneName: string,
     status: ZoneStatus,
