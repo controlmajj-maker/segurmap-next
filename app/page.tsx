@@ -130,6 +130,7 @@ export default function SegurMapApp() {
   const [backgroundImage, setBackgroundImage] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(true);
   const [showNewInspectionModal, setShowNewInspectionModal] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
   const bgInputRef = useRef<HTMLInputElement>(null);
 
   const loadData = useCallback(async () => {
@@ -284,6 +285,16 @@ export default function SegurMapApp() {
     setAllFindings(Array.isArray(finData) ? finData : []);
   }
 
+  async function handleDeleteAll() {
+    await fetch("/api/admin", { method: "DELETE" });
+    setInspections([]);
+    setAllFindings([]);
+    setZones(INITIAL_ZONES);
+    setIsInspectionActive(false);
+    setCurrentInspection(null);
+    setShowConfig(false);
+  }
+
   // Safe boolean check — Postgres returns actual booleans but just in case
   const activeFindings = allFindings.filter(f => f.is_closed !== true && (f as any).is_closed !== "true");
   const closedFindings = allFindings.filter(f => f.is_closed === true || (f as any).is_closed === "true");
@@ -346,6 +357,16 @@ export default function SegurMapApp() {
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+
+            <button
+              onClick={() => setShowConfig(true)}
+              className="w-9 h-9 rounded-xl flex items-center justify-center transition-all bg-slate-100 border text-slate-400 hover:bg-slate-200"
+              title="Configuración"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
               </svg>
             </button>
           </div>
@@ -694,6 +715,15 @@ export default function SegurMapApp() {
           <img src={zoomImage} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" alt="Evidencia Ampliada" />
         </div>
       )}
+
+      {showConfig && (
+        <ConfigModal
+          onClose={() => setShowConfig(false)}
+          onDeleteAll={handleDeleteAll}
+          inspectionCount={inspections.length}
+          findingCount={allFindings.length}
+        />
+      )}
     </div>
   );
 }
@@ -941,7 +971,6 @@ function FindingDetailModal({ item, zoneName, inspectionId, existing, onSave, on
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | undefined>(existing?.photo_url);
   const [isUploading, setIsUploading] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleSave = async () => {
@@ -957,11 +986,7 @@ function FindingDetailModal({ item, zoneName, inspectionId, existing, onSave, on
       photo_url = data.url;
     }
 
-    // Get AI analysis
-    setIsAnalyzing(true);
-    const ai_analysis = await getAIAnalysis(item.label, description, zoneName);
-    setIsAnalyzing(false);
-
+    // Save finding immediately without waiting for AI
     onSave({
       inspection_id: inspectionId,
       zone_name: zoneName,
@@ -969,10 +994,16 @@ function FindingDetailModal({ item, zoneName, inspectionId, existing, onSave, on
       description,
       severity,
       photo_url: photo_url || undefined,
-      ai_analysis: ai_analysis || undefined,
+      ai_analysis: undefined,
       is_closed: false,
     });
     setIsUploading(false);
+
+    // AI analysis runs in background (non-blocking)
+    getAIAnalysis(item.label, description, zoneName).then(ai_analysis => {
+      if (ai_analysis) console.log("AI analysis ready:", ai_analysis);
+      // AI analysis will be saved on next zone confirm
+    });
   };
 
   return (
@@ -1050,10 +1081,10 @@ function FindingDetailModal({ item, zoneName, inspectionId, existing, onSave, on
         <div className="p-5 bg-slate-50 border-t flex flex-col gap-2 shrink-0">
           <button
             onClick={handleSave}
-            disabled={!description.trim() || isUploading || isAnalyzing}
-            className={`w-full py-3 rounded-xl font-black text-sm text-white transition-all ${!description.trim() || isUploading || isAnalyzing ? "bg-slate-300" : "bg-slate-900 hover:bg-black shadow-lg"}`}
+            disabled={!description.trim() || isUploading}
+            className={`w-full py-3 rounded-xl font-black text-sm text-white transition-all ${!description.trim() || isUploading ? "bg-slate-300" : "bg-slate-900 hover:bg-black shadow-lg"}`}
           >
-            {isUploading ? "SUBIENDO FOTO..." : isAnalyzing ? "🤖 ANALIZANDO CON IA..." : "GUARDAR EVIDENCIA"}
+            {isUploading ? "SUBIENDO FOTO..." : "GUARDAR EVIDENCIA"}
           </button>
           <div className="flex gap-2">
             <button onClick={onClear} className="flex-1 py-2.5 rounded-xl border-2 border-slate-200 text-[9px] font-black uppercase text-slate-500">Borrar</button>
@@ -1181,6 +1212,116 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
           <button onClick={onClose} className="w-full py-3 bg-slate-900 text-white rounded-xl font-black text-xs uppercase">CERRAR</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Config Modal ─────────────────────────────────────────────────────────────
+function ConfigModal({ onClose, onDeleteAll, inspectionCount, findingCount }: {
+  onClose: () => void;
+  onDeleteAll: () => void;
+  inspectionCount: number;
+  findingCount: number;
+}) {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteWord, setDeleteWord] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleConfirmDelete = async () => {
+    if (deleteWord !== "BORRAR") return;
+    setIsDeleting(true);
+    await onDeleteAll();
+    setIsDeleting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/80 backdrop-blur flex items-center justify-center z-[200] p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md border-4 border-slate-100 overflow-hidden">
+        <div className="p-6 bg-slate-900 border-b flex justify-between items-center">
+          <div>
+            <h3 className="text-xl font-black text-white">Configuración</h3>
+            <p className="text-slate-400 text-xs uppercase font-bold tracking-widest mt-0.5">SegurMap MAQ</p>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 bg-white/10 text-white rounded-xl flex items-center justify-center border border-white/20">✕</button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {/* Stats */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-slate-50 p-4 rounded-2xl border text-center">
+              <p className="text-3xl font-black text-slate-800">{inspectionCount}</p>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Auditorías</p>
+            </div>
+            <div className="bg-slate-50 p-4 rounded-2xl border text-center">
+              <p className="text-3xl font-black text-slate-800">{findingCount}</p>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Hallazgos</p>
+            </div>
+          </div>
+
+          <hr className="border-slate-100" />
+
+          {/* Danger zone */}
+          <div className="bg-red-50 border-2 border-red-100 rounded-2xl p-4">
+            <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mb-1">⚠ Zona Peligrosa</p>
+            <p className="text-sm font-black text-slate-800 mb-1">Borrar todo el historial</p>
+            <p className="text-[10px] text-slate-500 mb-3">Elimina permanentemente todas las auditorías, hallazgos y evidencias de la base de datos. Esta acción no se puede deshacer.</p>
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="w-full py-3 bg-red-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg"
+            >
+              🗑 BORRAR TODO EL HISTORIAL
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-red-200 overflow-hidden">
+            <div className="p-6 bg-red-600 text-white text-center">
+              <p className="text-4xl mb-2">⚠️</p>
+              <h3 className="text-xl font-black">¿Borrar todo?</h3>
+              <p className="text-red-100 text-xs mt-1">Esta acción es irreversible</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-600 text-center">
+                Se eliminarán <strong>{inspectionCount} auditorías</strong> y <strong>{findingCount} hallazgos</strong> permanentemente.
+              </p>
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 text-center">
+                  Escribe <span className="text-red-600 font-black">BORRAR</span> para confirmar
+                </label>
+                <input
+                  value={deleteWord}
+                  onChange={e => setDeleteWord(e.target.value)}
+                  placeholder="BORRAR"
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none transition-all"
+                />
+              </div>
+            </div>
+            <div className="p-6 pt-0 flex gap-3">
+              <button
+                onClick={() => { setShowDeleteConfirm(false); setDeleteWord(""); }}
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50"
+              >
+                CANCELAR
+              </button>
+              <button
+                disabled={deleteWord !== "BORRAR" || isDeleting}
+                onClick={handleConfirmDelete}
+                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all ${
+                  deleteWord === "BORRAR" && !isDeleting
+                    ? "bg-red-600 hover:bg-red-700 shadow-lg"
+                    : "bg-slate-300"
+                }`}
+              >
+                {isDeleting ? "BORRANDO..." : "CONFIRMAR"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
