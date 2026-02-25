@@ -114,7 +114,7 @@ Responde solo con la recomendación, sin preámbulo.`;
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function SegurMapApp() {
-  const [view, setView] = useState<"current" | "history" | "active_issues">("current");
+  const [view, setView] = useState<"current" | "history" | "active_issues" | "config">("current");
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [allFindings, setAllFindings] = useState<Finding[]>([]);
   const [isInspectionActive, setIsInspectionActive] = useState(false);
@@ -126,11 +126,12 @@ export default function SegurMapApp() {
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
   const [expandedInspectionId, setExpandedInspectionId] = useState<string | null>(null);
-  const [isEditMode, setIsEditMode] = useState(false);
   const [backgroundImage, setBackgroundImage] = useState<string | undefined>();
+  const [bgOffsetX, setBgOffsetX] = useState(50);
+  const [bgOffsetY, setBgOffsetY] = useState(50);
+  const [bgZoom, setBgZoom] = useState(100);
   const [isLoading, setIsLoading] = useState(true);
   const [showNewInspectionModal, setShowNewInspectionModal] = useState(false);
-  const [showConfig, setShowConfig] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const bgInputRef = useRef<HTMLInputElement>(null);
 
@@ -379,6 +380,7 @@ export default function SegurMapApp() {
                 { key: "current", label: "Recorrido" },
                 { key: "active_issues", label: `Resolución (${activeFindings.length})` },
                 { key: "history", label: "Auditorías" },
+                { key: "config", label: "Configuración" },
               ].map(({ key, label }) => (
                 <button
                   key={key}
@@ -395,28 +397,6 @@ export default function SegurMapApp() {
                 </button>
               ))}
             </nav>
-
-            <button
-              onClick={() => setIsEditMode(!isEditMode)}
-              className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
-                isEditMode ? "bg-orange-500 text-white shadow-lg" : "bg-slate-100 border text-slate-400"
-              }`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
-
-            <button
-              onClick={() => setShowConfig(true)}
-              className="w-9 h-9 rounded-xl flex items-center justify-center transition-all bg-slate-100 border text-slate-400 hover:bg-slate-200"
-              title="Configuración"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-              </svg>
-            </button>
           </div>
         </div>
       </header>
@@ -427,11 +407,12 @@ export default function SegurMapApp() {
           { key: "current", label: "Mapa", icon: "M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" },
           { key: "active_issues", label: "Resolución", icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" },
           { key: "history", label: "Historial", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" },
+          { key: "config", label: "Config", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" },
         ].map(({ key, label, icon }) => (
           <button
             key={key}
             onClick={() => setView(key as any)}
-            className={`relative flex flex-col items-center gap-1 px-4 py-1 transition-all ${
+            className={`relative flex flex-col items-center gap-1 px-3 py-1 transition-all ${
               view === key
                 ? key === "active_issues" ? "text-red-600" : "text-blue-600"
                 : "text-slate-400"
@@ -455,30 +436,6 @@ export default function SegurMapApp() {
         {/* ── CURRENT VIEW ── */}
         {view === "current" && (
           <div className="space-y-6">
-            {isEditMode && (
-              <div className="bg-orange-50 border-2 border-orange-200 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">🔧</span>
-                  <div>
-                    <p className="font-black text-orange-900 uppercase text-xs tracking-widest">Editor de Planta</p>
-                    <p className="text-orange-700 text-[10px]">Carga tu plano y ajusta zonas</p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <input ref={bgInputRef} type="file" accept="image/*" className="hidden"
-                    onChange={e => {
-                      const f = e.target.files?.[0];
-                      if (f) { const r = new FileReader(); r.onload = () => setBackgroundImage(r.result as string); r.readAsDataURL(f); }
-                    }}
-                  />
-                  <button onClick={() => bgInputRef.current?.click()}
-                    className="bg-white px-4 py-2 rounded-xl text-xs font-black uppercase text-orange-600 border border-orange-200 shadow-sm">
-                    Cargar Plano
-                  </button>
-                </div>
-              </div>
-            )}
-
             <div className="bg-white p-4 md:p-8 rounded-3xl shadow-xl border border-slate-100">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
                 <div>
@@ -517,6 +474,9 @@ export default function SegurMapApp() {
                 zones={zones}
                 onZoneClick={z => isInspectionActive && setSelectedZone(z)}
                 backgroundImage={backgroundImage}
+                bgOffsetX={bgOffsetX}
+                bgOffsetY={bgOffsetY}
+                bgZoom={bgZoom}
                 isDisabled={!isInspectionActive}
               />
             </div>
@@ -806,6 +766,34 @@ export default function SegurMapApp() {
             )}
           </div>
         )}
+
+        {/* ── CONFIG VIEW ── */}
+        {view === "config" && (
+          <ConfigPage
+            inspectionCount={inspections.length}
+            findingCount={allFindings.length}
+            zones={zones}
+            backgroundImage={backgroundImage}
+            bgOffsetX={bgOffsetX}
+            bgOffsetY={bgOffsetY}
+            bgZoom={bgZoom}
+            bgInputRef={bgInputRef}
+            onBgChange={async (file) => {
+              // Upload to Vercel Blob
+              const formData = new FormData();
+              formData.append("file", file);
+              const res = await fetch("/api/upload", { method: "POST", body: formData });
+              const data = await res.json();
+              setBackgroundImage(data.url);
+            }}
+            onBgOffsetX={setBgOffsetX}
+            onBgOffsetY={setBgOffsetY}
+            onBgZoom={setBgZoom}
+            onBgRemove={() => setBackgroundImage(undefined)}
+            onZonesChange={setZones}
+            onDeleteAll={handleDeleteAll}
+          />
+        )}
       </main>
 
       {/* ── MODALS ── */}
@@ -878,24 +866,18 @@ export default function SegurMapApp() {
           </div>
         </div>
       )}
-
-      {showConfig && (
-        <ConfigModal
-          onClose={() => setShowConfig(false)}
-          onDeleteAll={handleDeleteAll}
-          inspectionCount={inspections.length}
-          findingCount={allFindings.length}
-        />
-      )}
     </div>
   );
 }
 
 // ─── Zone Map ─────────────────────────────────────────────────────────────────
-function ZoneMap({ zones, onZoneClick, backgroundImage, isDisabled }: {
+function ZoneMap({ zones, onZoneClick, backgroundImage, bgOffsetX = 50, bgOffsetY = 50, bgZoom = 100, isDisabled }: {
   zones: Zone[];
   onZoneClick: (z: Zone) => void;
   backgroundImage?: string;
+  bgOffsetX?: number;
+  bgOffsetY?: number;
+  bgZoom?: number;
   isDisabled: boolean;
 }) {
   const getStyle = (status: ZoneStatus) => {
@@ -907,7 +889,17 @@ function ZoneMap({ zones, onZoneClick, backgroundImage, isDisabled }: {
   return (
     <div className={`relative w-full aspect-video bg-slate-100 rounded-2xl border-4 border-slate-200 overflow-hidden shadow-inner ${isDisabled ? "opacity-75" : ""}`}>
       {backgroundImage ? (
-        <img src={backgroundImage} className={`absolute inset-0 w-full h-full object-cover ${isDisabled ? "grayscale opacity-50" : ""}`} alt="Plano" />
+        <img
+          src={backgroundImage}
+          className={`absolute inset-0 w-full h-full ${isDisabled ? "grayscale opacity-50" : ""}`}
+          style={{
+            objectFit: "cover",
+            objectPosition: `${bgOffsetX}% ${bgOffsetY}%`,
+            transform: `scale(${bgZoom / 100})`,
+            transformOrigin: `${bgOffsetX}% ${bgOffsetY}%`,
+          }}
+          alt="Plano"
+        />
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center opacity-10">
           <svg className="w-16 h-16 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1379,53 +1371,320 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
   );
 }
 
-// ─── Config Modal ─────────────────────────────────────────────────────────────
-function ConfigModal({ onClose, onDeleteAll, inspectionCount, findingCount }: {
-  onClose: () => void;
-  onDeleteAll: () => void;
+// ─── Config Page ──────────────────────────────────────────────────────────────
+function ConfigPage({
+  inspectionCount, findingCount, zones, backgroundImage,
+  bgOffsetX, bgOffsetY, bgZoom, bgInputRef,
+  onBgChange, onBgOffsetX, onBgOffsetY, onBgZoom, onBgRemove,
+  onZonesChange, onDeleteAll,
+}: {
   inspectionCount: number;
   findingCount: number;
+  zones: Zone[];
+  backgroundImage?: string;
+  bgOffsetX: number;
+  bgOffsetY: number;
+  bgZoom: number;
+  bgInputRef: React.RefObject<HTMLInputElement>;
+  onBgChange: (f: File) => Promise<void>;
+  onBgOffsetX: (v: number) => void;
+  onBgOffsetY: (v: number) => void;
+  onBgZoom: (v: number) => void;
+  onBgRemove: () => void;
+  onZonesChange: (zones: Zone[]) => void;
+  onDeleteAll: () => Promise<void>;
 }) {
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isUploadingBg, setIsUploadingBg] = useState(false);
+
+  // Zone management state
+  const [newZoneName, setNewZoneName] = useState("");
+  const [zoneToDelete, setZoneToDelete] = useState<Zone | null>(null);
   const [deleteWord, setDeleteWord] = useState("");
+
+  // History delete state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [histDeleteWord, setHistDeleteWord] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const handleConfirmDelete = async () => {
-    if (deleteWord !== "BORRAR") return;
+  const handleAddZone = () => {
+    if (!newZoneName.trim()) return;
+    const newZone: Zone = {
+      id: `z${Date.now()}`,
+      name: newZoneName.trim(),
+      status: "PENDING",
+      x: 10, y: 10, width: 30, height: 30,
+      findings: {},
+    };
+    onZonesChange([...zones, newZone]);
+    setNewZoneName("");
+  };
+
+  const handleMoveZone = (zoneId: string, axis: "x" | "y", delta: number) => {
+    onZonesChange(zones.map(z => {
+      if (z.id !== zoneId) return z;
+      const newVal = Math.max(0, Math.min(axis === "x" ? 100 - z.width : 100 - z.height, z[axis] + delta));
+      return { ...z, [axis]: newVal };
+    }));
+  };
+
+  const handleResizeZone = (zoneId: string, dim: "width" | "height", delta: number) => {
+    onZonesChange(zones.map(z => {
+      if (z.id !== zoneId) return z;
+      const newVal = Math.max(5, Math.min(dim === "width" ? 100 - z.x : 100 - z.y, z[dim] + delta));
+      return { ...z, [dim]: newVal };
+    }));
+  };
+
+  const handleConfirmDeleteZone = () => {
+    if (!zoneToDelete || deleteWord !== "BORRAR") return;
+    onZonesChange(zones.filter(z => z.id !== zoneToDelete.id));
+    setZoneToDelete(null);
+    setDeleteWord("");
+  };
+
+  const handleConfirmDeleteHistory = async () => {
+    if (histDeleteWord !== "BORRAR") return;
     setIsDeleting(true);
     await onDeleteAll();
     setIsDeleting(false);
+    setShowDeleteConfirm(false);
+    setHistDeleteWord("");
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/80 backdrop-blur flex items-center justify-center z-[200] p-4">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md border-4 border-slate-100 overflow-hidden">
-        <div className="p-6 bg-slate-900 border-b flex justify-between items-center">
-          <div>
-            <h3 className="text-xl font-black text-white">Configuración</h3>
-            <p className="text-slate-400 text-xs uppercase font-bold tracking-widest mt-0.5">SegurMap MAQ</p>
-          </div>
-          <button onClick={onClose} className="w-9 h-9 bg-white/10 text-white rounded-xl flex items-center justify-center border border-white/20">✕</button>
+    <div className="space-y-6 max-w-3xl mx-auto">
+      <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tight">Configuración</h2>
+
+      {/* ── Stats ── */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm text-center">
+          <p className="text-4xl font-black text-slate-800">{inspectionCount}</p>
+          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Auditorías</p>
         </div>
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm text-center">
+          <p className="text-4xl font-black text-slate-800">{findingCount}</p>
+          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Hallazgos</p>
+        </div>
+      </div>
 
-        <div className="p-6 space-y-4">
-          {/* Stats */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-slate-50 p-4 rounded-2xl border text-center">
-              <p className="text-3xl font-black text-slate-800">{inspectionCount}</p>
-              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Auditorías</p>
+      {/* ── Plano de Planta ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="p-5 border-b border-slate-100 flex items-center gap-3">
+          <div className="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600 text-lg">🗺️</div>
+          <div>
+            <h3 className="font-black text-slate-800">Plano de Planta</h3>
+            <p className="text-[10px] text-slate-400 font-bold uppercase">Imagen de fondo del mapa de zonas</p>
+          </div>
+        </div>
+        <div className="p-5 space-y-4">
+          <input
+            ref={bgInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={async e => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              setIsUploadingBg(true);
+              await onBgChange(f);
+              setIsUploadingBg(false);
+            }}
+          />
+
+          {backgroundImage ? (
+            <div className="space-y-4">
+              <div className="relative aspect-video rounded-xl overflow-hidden border-2 border-slate-100 bg-slate-50">
+                <img
+                  src={backgroundImage}
+                  className="w-full h-full"
+                  style={{
+                    objectFit: "cover",
+                    objectPosition: `${bgOffsetX}% ${bgOffsetY}%`,
+                    transform: `scale(${bgZoom / 100})`,
+                    transformOrigin: `${bgOffsetX}% ${bgOffsetY}%`,
+                  }}
+                  alt="Plano actual"
+                />
+              </div>
+
+              {/* Zoom */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Zoom: {bgZoom}%</label>
+                  <div className="flex gap-1">
+                    <button onClick={() => onBgZoom(Math.max(50, bgZoom - 5))} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all">−</button>
+                    <button onClick={() => onBgZoom(100)} className="px-2 h-7 bg-slate-100 rounded-lg text-[9px] font-black hover:bg-slate-200 transition-all uppercase">Reset</button>
+                    <button onClick={() => onBgZoom(Math.min(200, bgZoom + 5))} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all">+</button>
+                  </div>
+                </div>
+                <input type="range" min={50} max={200} value={bgZoom} onChange={e => onBgZoom(Number(e.target.value))}
+                  className="w-full accent-blue-600" />
+              </div>
+
+              {/* Posición Horizontal */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Posición Horizontal: {bgOffsetX}%</label>
+                  <div className="flex gap-1">
+                    <button onClick={() => onBgOffsetX(Math.max(0, bgOffsetX - 5))} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all">←</button>
+                    <button onClick={() => onBgOffsetX(50)} className="px-2 h-7 bg-slate-100 rounded-lg text-[9px] font-black hover:bg-slate-200 transition-all uppercase">Centro</button>
+                    <button onClick={() => onBgOffsetX(Math.min(100, bgOffsetX + 5))} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all">→</button>
+                  </div>
+                </div>
+                <input type="range" min={0} max={100} value={bgOffsetX} onChange={e => onBgOffsetX(Number(e.target.value))}
+                  className="w-full accent-blue-600" />
+              </div>
+
+              {/* Posición Vertical */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Posición Vertical: {bgOffsetY}%</label>
+                  <div className="flex gap-1">
+                    <button onClick={() => onBgOffsetY(Math.max(0, bgOffsetY - 5))} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all">↑</button>
+                    <button onClick={() => onBgOffsetY(50)} className="px-2 h-7 bg-slate-100 rounded-lg text-[9px] font-black hover:bg-slate-200 transition-all uppercase">Centro</button>
+                    <button onClick={() => onBgOffsetY(Math.min(100, bgOffsetY + 5))} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all">↓</button>
+                  </div>
+                </div>
+                <input type="range" min={0} max={100} value={bgOffsetY} onChange={e => onBgOffsetY(Number(e.target.value))}
+                  className="w-full accent-blue-600" />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button onClick={() => bgInputRef.current?.click()} disabled={isUploadingBg}
+                  className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs uppercase shadow hover:bg-blue-700 transition-all">
+                  {isUploadingBg ? "SUBIENDO..." : "CAMBIAR PLANO"}
+                </button>
+                <button onClick={onBgRemove}
+                  className="flex-1 py-2.5 bg-red-50 text-red-600 border-2 border-red-100 rounded-xl font-black text-xs uppercase hover:bg-red-100 transition-all">
+                  QUITAR PLANO
+                </button>
+              </div>
             </div>
-            <div className="bg-slate-50 p-4 rounded-2xl border text-center">
-              <p className="text-3xl font-black text-slate-800">{findingCount}</p>
-              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Hallazgos</p>
+          ) : (
+            <div>
+              <div
+                onClick={() => bgInputRef.current?.click()}
+                className="aspect-video border-4 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/30 transition-all"
+              >
+                {isUploadingBg ? (
+                  <><div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-2" /><p className="text-xs font-black text-blue-600 uppercase">Subiendo...</p></>
+                ) : (
+                  <><p className="text-4xl mb-2">🗺️</p><p className="text-xs font-black text-slate-400 uppercase tracking-widest">Toca para cargar plano</p><p className="text-[10px] text-slate-300 mt-1">JPG, PNG, WEBP</p></>
+                )}
+              </div>
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Zonas de Inspección ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="p-5 border-b border-slate-100 flex items-center gap-3">
+          <div className="w-9 h-9 bg-orange-100 rounded-xl flex items-center justify-center text-orange-600 text-lg">📐</div>
+          <div>
+            <h3 className="font-black text-slate-800">Zonas de Inspección</h3>
+            <p className="text-[10px] text-slate-400 font-bold uppercase">Crear, ajustar posición y tamaño</p>
+          </div>
+        </div>
+        <div className="p-5 space-y-4">
+          {/* Agregar nueva zona */}
+          <div className="flex gap-2">
+            <input
+              value={newZoneName}
+              onChange={e => setNewZoneName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleAddZone()}
+              placeholder="Nombre de nueva zona..."
+              className="flex-1 px-4 py-2.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-medium focus:border-blue-500 outline-none transition-all"
+            />
+            <button
+              onClick={handleAddZone}
+              disabled={!newZoneName.trim()}
+              className={`px-4 py-2.5 rounded-xl font-black text-xs uppercase transition-all ${newZoneName.trim() ? "bg-slate-900 text-white hover:bg-black shadow" : "bg-slate-100 text-slate-300"}`}
+            >
+              + AGREGAR
+            </button>
           </div>
 
-          <hr className="border-slate-100" />
+          {/* Lista de zonas */}
+          <div className="space-y-3">
+            {zones.map(zone => (
+              <div key={zone.id} className="border-2 border-slate-100 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-3 h-3 rounded-full ${zone.status === "OK" ? "bg-green-500" : zone.status === "ISSUE" ? "bg-red-500 animate-pulse" : "bg-slate-300"}`} />
+                    <span className="font-black text-slate-800 text-sm">{zone.name}</span>
+                    <span className="text-[8px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-black uppercase">{zone.status}</span>
+                  </div>
+                  <button
+                    onClick={() => { setZoneToDelete(zone); setDeleteWord(""); }}
+                    className="w-7 h-7 bg-red-50 text-red-500 rounded-lg flex items-center justify-center text-xs hover:bg-red-100 transition-all font-black"
+                  >✕</button>
+                </div>
 
-          {/* Danger zone */}
+                {/* Posición X/Y */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Posición X: {zone.x.toFixed(0)}%</p>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => handleMoveZone(zone.id, "x", -2)} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all flex-shrink-0">←</button>
+                      <input type="range" min={0} max={100 - zone.width} value={zone.x}
+                        onChange={e => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, x: Number(e.target.value) } : z))}
+                        className="flex-1 accent-orange-500" />
+                      <button onClick={() => handleMoveZone(zone.id, "x", 2)} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all flex-shrink-0">→</button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Posición Y: {zone.y.toFixed(0)}%</p>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => handleMoveZone(zone.id, "y", -2)} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all flex-shrink-0">↑</button>
+                      <input type="range" min={0} max={100 - zone.height} value={zone.y}
+                        onChange={e => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, y: Number(e.target.value) } : z))}
+                        className="flex-1 accent-orange-500" />
+                      <button onClick={() => handleMoveZone(zone.id, "y", 2)} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all flex-shrink-0">↓</button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tamaño W/H */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Ancho: {zone.width.toFixed(0)}%</p>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => handleResizeZone(zone.id, "width", -2)} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all flex-shrink-0">−</button>
+                      <input type="range" min={5} max={100 - zone.x} value={zone.width}
+                        onChange={e => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, width: Number(e.target.value) } : z))}
+                        className="flex-1 accent-orange-500" />
+                      <button onClick={() => handleResizeZone(zone.id, "width", 2)} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all flex-shrink-0">+</button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Alto: {zone.height.toFixed(0)}%</p>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => handleResizeZone(zone.id, "height", -2)} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all flex-shrink-0">−</button>
+                      <input type="range" min={5} max={100 - zone.y} value={zone.height}
+                        onChange={e => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, height: Number(e.target.value) } : z))}
+                        className="flex-1 accent-orange-500" />
+                      <button onClick={() => handleResizeZone(zone.id, "height", 2)} className="w-7 h-7 bg-slate-100 rounded-lg font-black text-sm hover:bg-slate-200 transition-all flex-shrink-0">+</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Borrar Historial ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="p-5 border-b border-slate-100 flex items-center gap-3">
+          <div className="w-9 h-9 bg-red-100 rounded-xl flex items-center justify-center text-red-600 text-lg">⚠️</div>
+          <div>
+            <h3 className="font-black text-slate-800">Zona Peligrosa</h3>
+            <p className="text-[10px] text-slate-400 font-bold uppercase">Acciones irreversibles</p>
+          </div>
+        </div>
+        <div className="p-5">
           <div className="bg-red-50 border-2 border-red-100 rounded-2xl p-4">
-            <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mb-1">⚠ Zona Peligrosa</p>
             <p className="text-sm font-black text-slate-800 mb-1">Borrar todo el historial</p>
             <p className="text-[10px] text-slate-500 mb-3">Elimina permanentemente todas las auditorías, hallazgos y evidencias de la base de datos. Esta acción no se puede deshacer.</p>
             <button
@@ -1438,7 +1697,47 @@ function ConfigModal({ onClose, onDeleteAll, inspectionCount, findingCount }: {
         </div>
       </div>
 
-      {/* Delete Confirmation Modal */}
+      {/* ── Modal confirmar borrar zona ── */}
+      {zoneToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-red-200 overflow-hidden">
+            <div className="p-6 bg-red-600 text-white text-center">
+              <p className="text-4xl mb-2">⚠️</p>
+              <h3 className="text-xl font-black">¿Eliminar zona?</h3>
+              <p className="text-red-100 text-sm mt-1 font-bold">"{zoneToDelete.name}"</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-600 text-center">Se eliminará la zona permanentemente del mapa de inspección.</p>
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 text-center">
+                  Escribe <span className="text-red-600 font-black">BORRAR</span> para confirmar
+                </label>
+                <input
+                  value={deleteWord}
+                  onChange={e => setDeleteWord(e.target.value)}
+                  placeholder="BORRAR"
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none transition-all"
+                />
+              </div>
+            </div>
+            <div className="p-6 pt-0 flex gap-3">
+              <button onClick={() => { setZoneToDelete(null); setDeleteWord(""); }}
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50">
+                CANCELAR
+              </button>
+              <button
+                disabled={deleteWord !== "BORRAR"}
+                onClick={handleConfirmDeleteZone}
+                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all ${deleteWord === "BORRAR" ? "bg-red-600 hover:bg-red-700 shadow-lg" : "bg-slate-300"}`}
+              >
+                ELIMINAR ZONA
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal confirmar borrar historial ── */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-red-200 overflow-hidden">
@@ -1456,28 +1755,22 @@ function ConfigModal({ onClose, onDeleteAll, inspectionCount, findingCount }: {
                   Escribe <span className="text-red-600 font-black">BORRAR</span> para confirmar
                 </label>
                 <input
-                  value={deleteWord}
-                  onChange={e => setDeleteWord(e.target.value)}
+                  value={histDeleteWord}
+                  onChange={e => setHistDeleteWord(e.target.value)}
                   placeholder="BORRAR"
                   className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none transition-all"
                 />
               </div>
             </div>
             <div className="p-6 pt-0 flex gap-3">
-              <button
-                onClick={() => { setShowDeleteConfirm(false); setDeleteWord(""); }}
-                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50"
-              >
+              <button onClick={() => { setShowDeleteConfirm(false); setHistDeleteWord(""); }}
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50">
                 CANCELAR
               </button>
               <button
-                disabled={deleteWord !== "BORRAR" || isDeleting}
-                onClick={handleConfirmDelete}
-                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all ${
-                  deleteWord === "BORRAR" && !isDeleting
-                    ? "bg-red-600 hover:bg-red-700 shadow-lg"
-                    : "bg-slate-300"
-                }`}
+                disabled={histDeleteWord !== "BORRAR" || isDeleting}
+                onClick={handleConfirmDeleteHistory}
+                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all ${histDeleteWord === "BORRAR" && !isDeleting ? "bg-red-600 hover:bg-red-700 shadow-lg" : "bg-slate-300"}`}
               >
                 {isDeleting ? "BORRANDO..." : "CONFIRMAR"}
               </button>
