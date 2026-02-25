@@ -138,16 +138,34 @@ export default function SegurMapApp() {
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [insRes, finRes] = await Promise.all([
+      const [insRes, finRes, cfgRes] = await Promise.all([
         fetch("/api/inspections"),
         fetch("/api/findings"),
+        fetch("/api/config"),
       ]);
       const insData: any[] = await insRes.json();
       const finData: Finding[] = await finRes.json();
+      const cfgData: Record<string, string> = cfgRes.ok ? await cfgRes.json() : {};
       const inspList = Array.isArray(insData) ? insData : [];
       const finList = Array.isArray(finData) ? finData : [];
       setInspections(inspList);
       setAllFindings(finList);
+
+      // Restore app config
+      if (cfgData.bg_url) setBackgroundImage(cfgData.bg_url);
+      if (cfgData.bg_zoom) setBgZoom(Number(cfgData.bg_zoom));
+      if (cfgData.bg_offset_x) setBgOffsetX(Number(cfgData.bg_offset_x));
+      if (cfgData.bg_offset_y) setBgOffsetY(Number(cfgData.bg_offset_y));
+      if (cfgData.zones_config) {
+        try {
+          const savedZones: Zone[] = JSON.parse(cfgData.zones_config);
+          if (Array.isArray(savedZones) && savedZones.length > 0) {
+            // Only apply saved zones if no active inspection (active inspection manages its own zones)
+            const activeInsp = inspList.find((i: any) => i.is_active === true);
+            if (!activeInsp) setZones(savedZones);
+          }
+        } catch { /* ignore malformed JSON */ }
+      }
 
       // Check if there's an active inspection in DB — restore it on any device
       const activeInsp = inspList.find((i: any) => i.is_active === true);
@@ -160,7 +178,6 @@ export default function SegurMapApp() {
           setZones(INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
         }
       } else {
-        // No active inspection — show last inspection's zone colors
         setIsInspectionActive(false);
         setCurrentInspection(null);
         const completedInsp = inspList.find((i: any) => !i.is_active && i.zones_data);
@@ -171,6 +188,17 @@ export default function SegurMapApp() {
   }, []);
 
   useEffect(() => { loadData(); }, []); // eslint-disable-line
+
+  // ─── Persist app config to DB ─────────────────────────────────────────────
+  const saveConfig = useCallback(async (patch: Record<string, string | number>) => {
+    try {
+      await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+    } catch { /* silent */ }
+  }, []);
 
   async function handleStartInspection(title: string, location: string, inspector: string) {
     const res = await fetch("/api/inspections", {
@@ -341,6 +369,8 @@ export default function SegurMapApp() {
     setZones(INITIAL_ZONES);
     setIsInspectionActive(false);
     setCurrentInspection(null);
+    // Also clear zones_config from app config
+    await saveConfig({ zones_config: JSON.stringify(INITIAL_ZONES) });
   }
 
   // Safe boolean check — Postgres returns actual booleans but just in case
@@ -778,18 +808,31 @@ export default function SegurMapApp() {
             bgZoom={bgZoom}
             bgInputRef={bgInputRef}
             onBgChange={async (file) => {
-              // Upload to Vercel Blob
               const formData = new FormData();
               formData.append("file", file);
+              if (backgroundImage) formData.append("previousUrl", backgroundImage);
               const res = await fetch("/api/upload", { method: "POST", body: formData });
               const data = await res.json();
               setBackgroundImage(data.url);
+              await saveConfig({ bg_url: data.url });
             }}
-            onBgOffsetX={setBgOffsetX}
-            onBgOffsetY={setBgOffsetY}
-            onBgZoom={setBgZoom}
-            onBgRemove={() => setBackgroundImage(undefined)}
-            onZonesChange={setZones}
+            onBgOffsetX={(v) => { setBgOffsetX(v); saveConfig({ bg_offset_x: v }); }}
+            onBgOffsetY={(v) => { setBgOffsetY(v); saveConfig({ bg_offset_y: v }); }}
+            onBgZoom={(v) => { setBgZoom(v); saveConfig({ bg_zoom: v }); }}
+            onBgRemove={() => {
+              if (backgroundImage) {
+                fetch("/api/upload", {
+                  method: "POST",
+                  body: (() => { const f = new FormData(); f.append("previousUrl", backgroundImage); return f; })(),
+                }).catch(() => {});
+              }
+              setBackgroundImage(undefined);
+              saveConfig({ bg_url: "" });
+            }}
+            onZonesChange={(newZones) => {
+              setZones(newZones);
+              saveConfig({ zones_config: JSON.stringify(newZones) });
+            }}
             onDeleteAll={handleDeleteAll}
           />
         )}
@@ -1396,6 +1439,8 @@ function ConfigPage({
   const [zoneToDelete, setZoneToDelete] = useState<Zone | null>(null);
   const [deleteWord, setDeleteWord] = useState("");
   const [expandedZoneId, setExpandedZoneId] = useState<string | null>(null);
+  const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
+  const [editingZoneName, setEditingZoneName] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [histDeleteWord, setHistDeleteWord] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
@@ -1430,11 +1475,19 @@ function ConfigPage({
     }));
   };
 
+  const handleSaveZoneName = (zoneId: string) => {
+    if (!editingZoneName.trim()) return;
+    onZonesChange(zones.map(z => z.id === zoneId ? { ...z, name: editingZoneName.trim() } : z));
+    setEditingZoneId(null);
+    setEditingZoneName("");
+  };
+
   const handleConfirmDeleteZone = () => {
     if (!zoneToDelete || deleteWord !== "BORRAR") return;
     onZonesChange(zones.filter(z => z.id !== zoneToDelete.id));
     setZoneToDelete(null);
     setDeleteWord("");
+    if (expandedZoneId === zoneToDelete.id) setExpandedZoneId(null);
   };
 
   const handleConfirmDeleteHistory = async () => {
@@ -1446,7 +1499,6 @@ function ConfigPage({
     setHistDeleteWord("");
   };
 
-  // Compute bg style: use translate to move image freely without clipping
   const bgStyle: React.CSSProperties = backgroundImage ? {
     backgroundImage: `url(${backgroundImage})`,
     backgroundSize: `${bgZoom}%`,
@@ -1454,8 +1506,22 @@ function ConfigPage({
     backgroundRepeat: "no-repeat",
   } : {};
 
+  const SliderRow = ({ label, value, min, max, onDec, onInc, onChange, onReset }: {
+    label: string; value: number; min: number; max: number;
+    onDec: () => void; onInc: () => void; onChange: (v: number) => void; onReset: () => void;
+  }) => (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[7px] font-black text-slate-400 uppercase w-14 shrink-0">{label}<br />{value}</span>
+      <button onClick={onDec} className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0 leading-none">−</button>
+      <input type="range" min={min} max={max} value={value} onChange={e => onChange(Number(e.target.value))}
+        className="flex-1 accent-blue-600 h-1" />
+      <button onClick={onInc} className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0 leading-none">+</button>
+      <button onClick={onReset} className="w-6 h-6 bg-slate-100 rounded-md font-black text-[8px] hover:bg-slate-200 shrink-0 leading-none">↺</button>
+    </div>
+  );
+
   return (
-    <div className="space-y-5 max-w-3xl mx-auto">
+    <div className="space-y-5 max-w-5xl mx-auto">
       <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">Configuración</h2>
 
       {/* Stats */}
@@ -1470,16 +1536,16 @@ function ConfigPage({
         </div>
       </div>
 
-      {/* ── Plano de Planta ── */}
+      {/* ── Plano de Planta — layout lateral ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600">🗺️</div>
+          <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">🗺️</div>
           <div>
             <h3 className="font-black text-slate-800 text-sm">Plano de Planta</h3>
-            <p className="text-[9px] text-slate-400 font-bold uppercase">Imagen de fondo · posición y zoom</p>
+            <p className="text-[9px] text-slate-400 font-bold uppercase">Imagen de fondo · posición · zoom</p>
           </div>
         </div>
-        <div className="p-4 space-y-3">
+        <div className="p-4">
           <input ref={bgInputRef} type="file" accept="image/*" className="hidden"
             onChange={async e => {
               const f = e.target.files?.[0];
@@ -1489,30 +1555,28 @@ function ConfigPage({
               setIsUploadingBg(false);
             }}
           />
-
-          {/* Vista previa — ~70% del tamaño anterior: max-w-sm centrado */}
-          <div className="flex justify-center">
-            <div className="w-full max-w-xs">
+          <div className="flex flex-col lg:flex-row gap-4">
+            {/* Preview — ~30% más grande que antes (max-w-xs → max-w-sm) */}
+            <div className="lg:w-96 shrink-0">
               {backgroundImage ? (
                 <div
                   className="relative w-full rounded-xl border-2 border-slate-200 overflow-hidden shadow-inner"
                   style={{ aspectRatio: "16/9", ...bgStyle }}
                 >
-                  {/* Zones overlay en preview */}
                   {zones.map(zone => (
                     <div
                       key={zone.id}
                       onClick={() => setExpandedZoneId(expandedZoneId === zone.id ? null : zone.id)}
                       className={`absolute border-2 rounded-lg flex items-center justify-center cursor-pointer transition-all ${
                         expandedZoneId === zone.id
-                          ? "border-orange-500 bg-orange-400/30"
-                          : zone.status === "ISSUE" ? "border-red-500 bg-red-400/20"
-                          : zone.status === "OK" ? "border-green-500 bg-green-400/20"
-                          : "border-slate-400 bg-slate-300/20 hover:border-blue-400 hover:bg-blue-300/20"
+                          ? "border-orange-500 bg-orange-400/40 shadow-lg"
+                          : zone.status === "ISSUE" ? "border-red-400 bg-red-300/20"
+                          : zone.status === "OK" ? "border-green-400 bg-green-300/20"
+                          : "border-slate-400/70 bg-white/10 hover:border-blue-400 hover:bg-blue-300/20"
                       }`}
                       style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.width}%`, height: `${zone.height}%` }}
                     >
-                      <span className="text-[6px] font-black text-white drop-shadow uppercase leading-tight text-center px-0.5">{zone.name}</span>
+                      <span className="text-[6px] md:text-[7px] font-black text-white drop-shadow-md uppercase text-center px-0.5 leading-tight">{zone.name}</span>
                     </div>
                   ))}
                 </div>
@@ -1524,146 +1588,187 @@ function ConfigPage({
                 >
                   {isUploadingBg
                     ? <><div className="w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-1" /><p className="text-[10px] font-black text-blue-600 uppercase">Subiendo...</p></>
-                    : <><p className="text-2xl mb-1">🗺️</p><p className="text-[10px] font-black text-slate-400 uppercase">Cargar plano</p><p className="text-[9px] text-slate-300">JPG · PNG · WEBP</p></>
+                    : <><p className="text-2xl mb-1">🗺️</p><p className="text-[10px] font-black text-slate-400 uppercase">Toca para cargar plano</p><p className="text-[9px] text-slate-300 mt-0.5">JPG · PNG · WEBP</p></>
                   }
                 </div>
               )}
+
+              {backgroundImage && (
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => bgInputRef.current?.click()} disabled={isUploadingBg}
+                    className="flex-1 py-1.5 bg-blue-600 text-white rounded-lg font-black text-[9px] uppercase shadow hover:bg-blue-700 transition-all">
+                    {isUploadingBg ? "SUBIENDO..." : "CAMBIAR PLANO"}
+                  </button>
+                  <button onClick={onBgRemove}
+                    className="flex-1 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg font-black text-[9px] uppercase hover:bg-red-100 transition-all">
+                    QUITAR
+                  </button>
+                </div>
+              )}
             </div>
+
+            {/* Controles al lado derecho */}
+            {backgroundImage && (
+              <div className="flex-1 space-y-2 min-w-0">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2">Ajustar vista del plano</p>
+                <SliderRow label={`Zoom ${bgZoom}%`} value={bgZoom} min={50} max={300}
+                  onDec={() => onBgZoom(Math.max(50, bgZoom - 5))}
+                  onInc={() => onBgZoom(Math.min(300, bgZoom + 5))}
+                  onChange={onBgZoom}
+                  onReset={() => onBgZoom(100)} />
+                <SliderRow label={`H ${bgOffsetX}%`} value={bgOffsetX} min={0} max={100}
+                  onDec={() => onBgOffsetX(Math.max(0, bgOffsetX - 5))}
+                  onInc={() => onBgOffsetX(Math.min(100, bgOffsetX + 5))}
+                  onChange={onBgOffsetX}
+                  onReset={() => onBgOffsetX(50)} />
+                <SliderRow label={`V ${bgOffsetY}%`} value={bgOffsetY} min={0} max={100}
+                  onDec={() => onBgOffsetY(Math.max(0, bgOffsetY - 5))}
+                  onInc={() => onBgOffsetY(Math.min(100, bgOffsetY + 5))}
+                  onChange={onBgOffsetY}
+                  onReset={() => onBgOffsetY(50)} />
+                <p className="text-[8px] text-slate-300 mt-2 pt-2 border-t border-slate-100">Toca una zona en el mapa para seleccionarla y ajustar su posición.</p>
+
+                {/* Controles de zona seleccionada — aparecen aquí al seleccionar */}
+                {expandedZoneId && (() => {
+                  const z = zones.find(zo => zo.id === expandedZoneId);
+                  if (!z) return null;
+                  return (
+                    <div className="mt-3 pt-3 border-t border-orange-200 space-y-2">
+                      <p className="text-[8px] font-black text-orange-500 uppercase tracking-widest">Zona: {z.name}</p>
+                      <SliderRow label={`X ${z.x.toFixed(0)}%`} value={z.x} min={0} max={100 - z.width}
+                        onDec={() => handleMoveZone(z.id, "x", -2)}
+                        onInc={() => handleMoveZone(z.id, "x", 2)}
+                        onChange={v => onZonesChange(zones.map(zo => zo.id === z.id ? { ...zo, x: v } : zo))}
+                        onReset={() => {}} />
+                      <SliderRow label={`Y ${z.y.toFixed(0)}%`} value={z.y} min={0} max={100 - z.height}
+                        onDec={() => handleMoveZone(z.id, "y", -2)}
+                        onInc={() => handleMoveZone(z.id, "y", 2)}
+                        onChange={v => onZonesChange(zones.map(zo => zo.id === z.id ? { ...zo, y: v } : zo))}
+                        onReset={() => {}} />
+                      <SliderRow label={`W ${z.width.toFixed(0)}%`} value={z.width} min={5} max={100 - z.x}
+                        onDec={() => handleResizeZone(z.id, "width", -2)}
+                        onInc={() => handleResizeZone(z.id, "width", 2)}
+                        onChange={v => onZonesChange(zones.map(zo => zo.id === z.id ? { ...zo, width: v } : zo))}
+                        onReset={() => {}} />
+                      <SliderRow label={`H ${z.height.toFixed(0)}%`} value={z.height} min={5} max={100 - z.y}
+                        onDec={() => handleResizeZone(z.id, "height", -2)}
+                        onInc={() => handleResizeZone(z.id, "height", 2)}
+                        onChange={v => onZonesChange(zones.map(zo => zo.id === z.id ? { ...zo, height: v } : zo))}
+                        onReset={() => {}} />
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
-
-          {backgroundImage && (
-            <div className="space-y-2">
-              {/* Zoom */}
-              <div className="flex items-center gap-2">
-                <span className="text-[8px] font-black text-slate-400 uppercase w-16 shrink-0">Zoom {bgZoom}%</span>
-                <button onClick={() => onBgZoom(Math.max(50, bgZoom - 5))} className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">−</button>
-                <input type="range" min={50} max={300} value={bgZoom} onChange={e => onBgZoom(Number(e.target.value))} className="flex-1 accent-blue-600 h-1.5" />
-                <button onClick={() => onBgZoom(Math.min(300, bgZoom + 5))} className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">+</button>
-                <button onClick={() => onBgZoom(100)} className="px-2 h-6 bg-slate-100 rounded-md text-[8px] font-black hover:bg-slate-200 uppercase shrink-0">↺</button>
-              </div>
-              {/* Horizontal */}
-              <div className="flex items-center gap-2">
-                <span className="text-[8px] font-black text-slate-400 uppercase w-16 shrink-0">H {bgOffsetX}%</span>
-                <button onClick={() => onBgOffsetX(Math.max(0, bgOffsetX - 5))} className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">←</button>
-                <input type="range" min={0} max={100} value={bgOffsetX} onChange={e => onBgOffsetX(Number(e.target.value))} className="flex-1 accent-blue-600 h-1.5" />
-                <button onClick={() => onBgOffsetX(Math.min(100, bgOffsetX + 5))} className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">→</button>
-                <button onClick={() => onBgOffsetX(50)} className="px-2 h-6 bg-slate-100 rounded-md text-[8px] font-black hover:bg-slate-200 uppercase shrink-0">↺</button>
-              </div>
-              {/* Vertical */}
-              <div className="flex items-center gap-2">
-                <span className="text-[8px] font-black text-slate-400 uppercase w-16 shrink-0">V {bgOffsetY}%</span>
-                <button onClick={() => onBgOffsetY(Math.max(0, bgOffsetY - 5))} className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">↑</button>
-                <input type="range" min={0} max={100} value={bgOffsetY} onChange={e => onBgOffsetY(Number(e.target.value))} className="flex-1 accent-blue-600 h-1.5" />
-                <button onClick={() => onBgOffsetY(Math.min(100, bgOffsetY + 5))} className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">↓</button>
-                <button onClick={() => onBgOffsetY(50)} className="px-2 h-6 bg-slate-100 rounded-md text-[8px] font-black hover:bg-slate-200 uppercase shrink-0">↺</button>
-              </div>
-
-              <div className="flex gap-2 pt-1">
-                <button onClick={() => bgInputRef.current?.click()} disabled={isUploadingBg}
-                  className="flex-1 py-2 bg-blue-600 text-white rounded-xl font-black text-[10px] uppercase shadow hover:bg-blue-700 transition-all">
-                  {isUploadingBg ? "SUBIENDO..." : "CAMBIAR PLANO"}
-                </button>
-                <button onClick={onBgRemove}
-                  className="flex-1 py-2 bg-red-50 text-red-600 border-2 border-red-100 rounded-xl font-black text-[10px] uppercase hover:bg-red-100 transition-all">
-                  QUITAR PLANO
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
       {/* ── Zonas de Inspección ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 bg-orange-100 rounded-xl flex items-center justify-center text-orange-600">📐</div>
+          <div className="w-8 h-8 bg-orange-100 rounded-xl flex items-center justify-center">📐</div>
           <div>
             <h3 className="font-black text-slate-800 text-sm">Zonas de Inspección</h3>
-            <p className="text-[9px] text-slate-400 font-bold uppercase">Crear · posición · tamaño</p>
+            <p className="text-[9px] text-slate-400 font-bold uppercase">Crear · renombrar · ajustar · eliminar</p>
           </div>
         </div>
         <div className="p-4 space-y-3">
           {/* Agregar nueva zona */}
           <div className="flex gap-2">
-            <input
-              value={newZoneName}
-              onChange={e => setNewZoneName(e.target.value)}
+            <input value={newZoneName} onChange={e => setNewZoneName(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleAddZone()}
               placeholder="Nombre de nueva zona..."
-              className="flex-1 px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-medium focus:border-blue-500 outline-none transition-all"
-            />
+              className="flex-1 px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-medium focus:border-blue-500 outline-none transition-all" />
             <button onClick={handleAddZone} disabled={!newZoneName.trim()}
               className={`px-3 py-2 rounded-xl font-black text-xs uppercase transition-all ${newZoneName.trim() ? "bg-slate-900 text-white hover:bg-black shadow" : "bg-slate-100 text-slate-300"}`}>
               + ADD
             </button>
           </div>
 
-          {/* Lista acordeón de zonas */}
+          {/* Lista acordeón */}
           <div className="space-y-1.5">
             {zones.map(zone => {
               const isOpen = expandedZoneId === zone.id;
+              const isEditing = editingZoneId === zone.id;
               return (
                 <div key={zone.id} className={`border-2 rounded-xl overflow-hidden transition-all ${isOpen ? "border-orange-300" : "border-slate-100"}`}>
-                  {/* Header fila */}
                   <div
                     className={`flex items-center justify-between px-3 py-2 cursor-pointer transition-all ${isOpen ? "bg-orange-50" : "hover:bg-slate-50"}`}
-                    onClick={() => setExpandedZoneId(isOpen ? null : zone.id)}
+                    onClick={() => !isEditing && setExpandedZoneId(isOpen ? null : zone.id)}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
                       <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${zone.status === "OK" ? "bg-green-500" : zone.status === "ISSUE" ? "bg-red-500 animate-pulse" : "bg-slate-300"}`} />
-                      <span className="font-black text-slate-800 text-xs">{zone.name}</span>
-                      <span className="text-[7px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full font-black uppercase">{zone.status}</span>
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          value={editingZoneName}
+                          onChange={e => setEditingZoneName(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") handleSaveZoneName(zone.id); if (e.key === "Escape") { setEditingZoneId(null); } }}
+                          onClick={e => e.stopPropagation()}
+                          className="flex-1 px-2 py-0.5 text-xs font-black bg-white border-2 border-blue-400 rounded-lg outline-none min-w-0"
+                        />
+                      ) : (
+                        <span className="font-black text-slate-800 text-xs truncate">{zone.name}</span>
+                      )}
+                      <span className="text-[7px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0">{zone.status}</span>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={e => { e.stopPropagation(); setZoneToDelete(zone); setDeleteWord(""); }}
-                        className="w-6 h-6 bg-red-50 text-red-500 rounded-lg flex items-center justify-center text-[10px] hover:bg-red-100 transition-all font-black"
-                      >✕</button>
-                      <svg className={`w-3 h-3 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" />
-                      </svg>
+                    <div className="flex items-center gap-1 ml-2 shrink-0">
+                      {isEditing ? (
+                        <>
+                          <button onClick={e => { e.stopPropagation(); handleSaveZoneName(zone.id); }}
+                            className="px-2 h-6 bg-green-600 text-white rounded-md font-black text-[8px] hover:bg-green-700">✓</button>
+                          <button onClick={e => { e.stopPropagation(); setEditingZoneId(null); }}
+                            className="px-2 h-6 bg-slate-200 text-slate-600 rounded-md font-black text-[8px] hover:bg-slate-300">✕</button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={e => { e.stopPropagation(); setEditingZoneId(zone.id); setEditingZoneName(zone.name); }}
+                            className="w-6 h-6 bg-blue-50 text-blue-500 rounded-md flex items-center justify-center hover:bg-blue-100 transition-all"
+                            title="Renombrar zona"
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          </button>
+                          <button onClick={e => { e.stopPropagation(); setZoneToDelete(zone); setDeleteWord(""); }}
+                            className="w-6 h-6 bg-red-50 text-red-500 rounded-md flex items-center justify-center text-[10px] hover:bg-red-100 transition-all font-black">✕</button>
+                          <svg className={`w-3 h-3 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </>
+                      )}
                     </div>
                   </div>
 
-                  {/* Controles expandidos */}
-                  {isOpen && (
+                  {/* Controles expandidos (solo si no hay mapa cargado — si hay mapa los controles aparecen al lado del mapa) */}
+                  {isOpen && !backgroundImage && (
                     <div className="px-3 pb-3 pt-2 bg-orange-50/50 space-y-2">
-                      {/* Posición X */}
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0">X {zone.x.toFixed(0)}%</span>
-                        <button onClick={() => handleMoveZone(zone.id, "x", -2)} className="w-6 h-6 bg-white border border-slate-200 rounded-md font-black text-xs hover:bg-slate-100 shrink-0">←</button>
-                        <input type="range" min={0} max={100 - zone.width} value={zone.x}
-                          onChange={e => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, x: Number(e.target.value) } : z))}
-                          className="flex-1 accent-orange-500 h-1.5" />
-                        <button onClick={() => handleMoveZone(zone.id, "x", 2)} className="w-6 h-6 bg-white border border-slate-200 rounded-md font-black text-xs hover:bg-slate-100 shrink-0">→</button>
-                      </div>
-                      {/* Posición Y */}
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0">Y {zone.y.toFixed(0)}%</span>
-                        <button onClick={() => handleMoveZone(zone.id, "y", -2)} className="w-6 h-6 bg-white border border-slate-200 rounded-md font-black text-xs hover:bg-slate-100 shrink-0">↑</button>
-                        <input type="range" min={0} max={100 - zone.height} value={zone.y}
-                          onChange={e => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, y: Number(e.target.value) } : z))}
-                          className="flex-1 accent-orange-500 h-1.5" />
-                        <button onClick={() => handleMoveZone(zone.id, "y", 2)} className="w-6 h-6 bg-white border border-slate-200 rounded-md font-black text-xs hover:bg-slate-100 shrink-0">↓</button>
-                      </div>
-                      {/* Ancho */}
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0">W {zone.width.toFixed(0)}%</span>
-                        <button onClick={() => handleResizeZone(zone.id, "width", -2)} className="w-6 h-6 bg-white border border-slate-200 rounded-md font-black text-xs hover:bg-slate-100 shrink-0">−</button>
-                        <input type="range" min={5} max={100 - zone.x} value={zone.width}
-                          onChange={e => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, width: Number(e.target.value) } : z))}
-                          className="flex-1 accent-orange-500 h-1.5" />
-                        <button onClick={() => handleResizeZone(zone.id, "width", 2)} className="w-6 h-6 bg-white border border-slate-200 rounded-md font-black text-xs hover:bg-slate-100 shrink-0">+</button>
-                      </div>
-                      {/* Alto */}
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0">H {zone.height.toFixed(0)}%</span>
-                        <button onClick={() => handleResizeZone(zone.id, "height", -2)} className="w-6 h-6 bg-white border border-slate-200 rounded-md font-black text-xs hover:bg-slate-100 shrink-0">−</button>
-                        <input type="range" min={5} max={100 - zone.y} value={zone.height}
-                          onChange={e => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, height: Number(e.target.value) } : z))}
-                          className="flex-1 accent-orange-500 h-1.5" />
-                        <button onClick={() => handleResizeZone(zone.id, "height", 2)} className="w-6 h-6 bg-white border border-slate-200 rounded-md font-black text-xs hover:bg-slate-100 shrink-0">+</button>
-                      </div>
+                      <p className="text-[7px] text-slate-400 font-bold uppercase mb-1">Carga un plano para ajustar visualmente las zonas.</p>
+                      {[
+                        { label: `X ${zone.x.toFixed(0)}%`, value: zone.x, min: 0, max: 100 - zone.width,
+                          onDec: () => handleMoveZone(zone.id, "x", -2), onInc: () => handleMoveZone(zone.id, "x", 2),
+                          onChange: (v: number) => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, x: v } : z)), onReset: () => {} },
+                        { label: `Y ${zone.y.toFixed(0)}%`, value: zone.y, min: 0, max: 100 - zone.height,
+                          onDec: () => handleMoveZone(zone.id, "y", -2), onInc: () => handleMoveZone(zone.id, "y", 2),
+                          onChange: (v: number) => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, y: v } : z)), onReset: () => {} },
+                        { label: `W ${zone.width.toFixed(0)}%`, value: zone.width, min: 5, max: 100 - zone.x,
+                          onDec: () => handleResizeZone(zone.id, "width", -2), onInc: () => handleResizeZone(zone.id, "width", 2),
+                          onChange: (v: number) => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, width: v } : z)), onReset: () => {} },
+                        { label: `H ${zone.height.toFixed(0)}%`, value: zone.height, min: 5, max: 100 - zone.y,
+                          onDec: () => handleResizeZone(zone.id, "height", -2), onInc: () => handleResizeZone(zone.id, "height", 2),
+                          onChange: (v: number) => onZonesChange(zones.map(z => z.id === zone.id ? { ...z, height: v } : z)), onReset: () => {} },
+                      ].map(({ label, value, min, max, onDec, onInc, onChange }) => (
+                        <div key={label} className="flex items-center gap-1.5">
+                          <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0">{label}</span>
+                          <button onClick={onDec} className="w-6 h-6 bg-white border border-slate-200 rounded-md font-black text-xs hover:bg-slate-100 shrink-0">−</button>
+                          <input type="range" min={min} max={max} value={value}
+                            onChange={e => onChange(Number(e.target.value))}
+                            className="flex-1 accent-orange-500 h-1.5" />
+                          <button onClick={onInc} className="w-6 h-6 bg-white border border-slate-200 rounded-md font-black text-xs hover:bg-slate-100 shrink-0">+</button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -1676,7 +1781,7 @@ function ConfigPage({
       {/* ── Eliminar Historial Completo ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 bg-red-100 rounded-xl flex items-center justify-center text-red-600">⚠️</div>
+          <div className="w-8 h-8 bg-red-100 rounded-xl flex items-center justify-center">⚠️</div>
           <div>
             <h3 className="font-black text-slate-800 text-sm">Eliminar Historial Completo</h3>
             <p className="text-[9px] text-red-400 font-bold uppercase">Acción irreversible</p>
@@ -1762,3 +1867,4 @@ function ConfigPage({
     </div>
   );
 }
+
