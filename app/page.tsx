@@ -151,23 +151,13 @@ export default function SegurMapApp() {
       setInspections(inspList);
       setAllFindings(finList);
 
-      // Restore app config
+      // Restore app config (bg image, zoom, offsets)
       if (cfgData.bg_url) setBackgroundImage(cfgData.bg_url);
       if (cfgData.bg_zoom) setBgZoom(Number(cfgData.bg_zoom));
       if (cfgData.bg_offset_x) setBgOffsetX(Number(cfgData.bg_offset_x));
       if (cfgData.bg_offset_y) setBgOffsetY(Number(cfgData.bg_offset_y));
-      if (cfgData.zones_config) {
-        try {
-          const savedZones: Zone[] = JSON.parse(cfgData.zones_config);
-          if (Array.isArray(savedZones) && savedZones.length > 0) {
-            // Only apply saved zones if no active inspection (active inspection manages its own zones)
-            const activeInsp = inspList.find((i: any) => i.is_active === true);
-            if (!activeInsp) setZones(savedZones);
-          }
-        } catch { /* ignore malformed JSON */ }
-      }
 
-      // Check if there's an active inspection in DB — restore it on any device
+      // Check active inspection first — it owns zone state while active
       const activeInsp = inspList.find((i: any) => i.is_active === true);
       if (activeInsp) {
         setCurrentInspection(activeInsp);
@@ -180,8 +170,19 @@ export default function SegurMapApp() {
       } else {
         setIsInspectionActive(false);
         setCurrentInspection(null);
-        const completedInsp = inspList.find((i: any) => !i.is_active && i.zones_data);
-        if (completedInsp) setZones(completedInsp.zones_data);
+        // Zones config (layout/positions) takes priority over last inspection's colored zones
+        if (cfgData.zones_config) {
+          try {
+            const savedZones: Zone[] = JSON.parse(cfgData.zones_config);
+            if (Array.isArray(savedZones) && savedZones.length > 0) {
+              setZones(savedZones);
+            }
+          } catch { /* ignore malformed JSON */ }
+        } else {
+          // Fall back to last inspection's zone colors only if no saved config
+          const completedInsp = inspList.find((i: any) => !i.is_active && i.zones_data);
+          if (completedInsp) setZones(completedInsp.zones_data);
+        }
       }
     } catch (e) { console.error(e); }
     setIsLoading(false);
@@ -189,15 +190,19 @@ export default function SegurMapApp() {
 
   useEffect(() => { loadData(); }, []); // eslint-disable-line
 
-  // ─── Persist app config to DB ─────────────────────────────────────────────
-  const saveConfig = useCallback(async (patch: Record<string, string | number>) => {
-    try {
-      await fetch("/api/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-    } catch { /* silent */ }
+  // ─── Persist app config to DB (debounced to avoid interrupting slider drag) ─
+  const saveConfigTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveConfig = useCallback((patch: Record<string, string | number>) => {
+    if (saveConfigTimer.current) clearTimeout(saveConfigTimer.current);
+    saveConfigTimer.current = setTimeout(async () => {
+      try {
+        await fetch("/api/config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+      } catch { /* silent */ }
+    }, 600);
   }, []);
 
   async function handleStartInspection(title: string, location: string, inspector: string) {
@@ -1413,6 +1418,474 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
 
 // ─── Config Page ──────────────────────────────────────────────────────────────
 function ConfigPage({
+  inspectionCount, findingCount, zones, backgroundImage,
+  bgOffsetX, bgOffsetY, bgZoom, bgInputRef,
+  onBgChange, onBgOffsetX, onBgOffsetY, onBgZoom, onBgRemove,
+  onZonesChange, onDeleteAll,
+}: {
+  inspectionCount: number;
+  findingCount: number;
+  zones: Zone[];
+  backgroundImage?: string;
+  bgOffsetX: number;
+  bgOffsetY: number;
+  bgZoom: number;
+  bgInputRef: React.RefObject<HTMLInputElement>;
+  onBgChange: (f: File) => Promise<void>;
+  onBgOffsetX: (v: number) => void;
+  onBgOffsetY: (v: number) => void;
+  onBgZoom: (v: number) => void;
+  onBgRemove: () => void;
+  onZonesChange: (zones: Zone[]) => void;
+  onDeleteAll: () => Promise<void>;
+}) {
+  const [isUploadingBg, setIsUploadingBg] = useState(false);
+  const [newZoneName, setNewZoneName] = useState("");
+  const [zoneToDelete, setZoneToDelete] = useState<Zone | null>(null);
+  const [deleteWord, setDeleteWord] = useState("");
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
+  const [editingZoneName, setEditingZoneName] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [histDeleteWord, setHistDeleteWord] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Local draft of zones — avoids re-renders mid-drag that break sliders
+  const [draftZones, setDraftZones] = useState<Zone[]>(zones);
+  // Sync when parent zones change (e.g. on load)
+  useEffect(() => { setDraftZones(zones); }, [zones]);
+
+  // Commit draft to parent + persist (called on slider mouseUp / button click)
+  const commitZones = useCallback((updated: Zone[]) => {
+    setDraftZones(updated);
+    onZonesChange(updated);
+  }, [onZonesChange]);
+
+  // Update draft only (during drag — no parent call, no re-render cascade)
+  const updateDraft = useCallback((updated: Zone[]) => {
+    setDraftZones(updated);
+  }, []);
+
+  const handleAddZone = () => {
+    if (!newZoneName.trim()) return;
+    const newZone: Zone = {
+      id: `z${Date.now()}`,
+      name: newZoneName.trim(),
+      status: "PENDING",
+      x: 10, y: 10, width: 25, height: 25,
+      findings: {},
+    };
+    const updated = [...draftZones, newZone];
+    commitZones(updated);
+    setNewZoneName("");
+    setSelectedZoneId(newZone.id);
+  };
+
+  const handleSaveZoneName = (zoneId: string) => {
+    if (!editingZoneName.trim()) return;
+    commitZones(draftZones.map(z => z.id === zoneId ? { ...z, name: editingZoneName.trim() } : z));
+    setEditingZoneId(null);
+    setEditingZoneName("");
+  };
+
+  const handleConfirmDeleteZone = () => {
+    if (!zoneToDelete || deleteWord !== "BORRAR") return;
+    commitZones(draftZones.filter(z => z.id !== zoneToDelete.id));
+    setZoneToDelete(null);
+    setDeleteWord("");
+    if (selectedZoneId === zoneToDelete.id) setSelectedZoneId(null);
+  };
+
+  const handleConfirmDeleteHistory = async () => {
+    if (histDeleteWord !== "BORRAR") return;
+    setIsDeleting(true);
+    await onDeleteAll();
+    setIsDeleting(false);
+    setShowDeleteConfirm(false);
+    setHistDeleteWord("");
+  };
+
+  const selectedZone = draftZones.find(z => z.id === selectedZoneId) ?? null;
+
+  const bgStyle: React.CSSProperties = backgroundImage ? {
+    backgroundImage: `url(${backgroundImage})`,
+    backgroundSize: `${bgZoom}%`,
+    backgroundPosition: `${bgOffsetX}% ${bgOffsetY}%`,
+    backgroundRepeat: "no-repeat",
+  } : {};
+
+  // Compact slider row — max is FIXED (passed as prop, not re-derived mid-render)
+  const SliderRow = ({ label, value, fixedMax, min, accent, onDec, onInc, onDrag, onCommit, onReset }: {
+    label: string; value: number; min: number; fixedMax: number; accent: string;
+    onDec: () => void; onInc: () => void;
+    onDrag: (v: number) => void;   // called during drag (updates draft only)
+    onCommit: (v: number) => void; // called on mouseUp/touchEnd (persists)
+    onReset?: () => void;
+  }) => (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0 leading-tight">{label}<br/><span className="text-slate-600">{Math.round(value)}</span></span>
+      <button onMouseDown={e => { e.preventDefault(); onDec(); }}
+        className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 active:bg-slate-300 shrink-0 select-none">−</button>
+      <input
+        type="range" min={min} max={fixedMax} value={value}
+        onChange={e => onDrag(Number(e.target.value))}
+        onMouseUp={e => onCommit(Number((e.target as HTMLInputElement).value))}
+        onTouchEnd={e => onCommit(Number((e.target as HTMLInputElement).value))}
+        className={`flex-1 ${accent} cursor-pointer`}
+        style={{ height: "18px", accentColor: undefined }}
+      />
+      <button onMouseDown={e => { e.preventDefault(); onInc(); }}
+        className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 active:bg-slate-300 shrink-0 select-none">+</button>
+      {onReset && (
+        <button onMouseDown={e => { e.preventDefault(); onReset(); }}
+          className="w-6 h-6 bg-slate-100 rounded-md font-black text-[8px] hover:bg-slate-200 shrink-0 select-none">↺</button>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-5 max-w-5xl mx-auto">
+      <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">Configuración</h2>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm text-center">
+          <p className="text-3xl font-black text-slate-800">{inspectionCount}</p>
+          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Auditorías</p>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm text-center">
+          <p className="text-3xl font-black text-slate-800">{findingCount}</p>
+          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Hallazgos</p>
+        </div>
+      </div>
+
+      {/* ── Plano de Planta + Zonas — layout lateral siempre visible ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex items-center gap-3">
+          <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">🗺️</div>
+          <div>
+            <h3 className="font-black text-slate-800 text-sm">Plano y Zonas</h3>
+            <p className="text-[9px] text-slate-400 font-bold uppercase">Selecciona una zona para ajustarla · los cambios se guardan automáticamente</p>
+          </div>
+        </div>
+        <div className="p-4">
+          <input ref={bgInputRef} type="file" accept="image/*" className="hidden"
+            onChange={async e => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              setIsUploadingBg(true);
+              await onBgChange(f);
+              setIsUploadingBg(false);
+            }}
+          />
+
+          <div className="flex flex-col lg:flex-row gap-4">
+            {/* ── Canvas (siempre visible) ── */}
+            <div className="lg:w-[420px] shrink-0 space-y-2">
+              {/* Map preview */}
+              <div
+                className="relative w-full rounded-xl border-2 border-slate-200 overflow-hidden shadow-inner bg-slate-100"
+                style={{ aspectRatio: "16/9", ...(backgroundImage ? bgStyle : {}) }}
+              >
+                {!backgroundImage && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center opacity-20 pointer-events-none">
+                    <p className="text-3xl">🗺️</p>
+                    <p className="text-[9px] font-black uppercase text-slate-500 mt-1">Sin plano cargado</p>
+                  </div>
+                )}
+                {draftZones.map(zone => (
+                  <div
+                    key={zone.id}
+                    onClick={() => setSelectedZoneId(selectedZoneId === zone.id ? null : zone.id)}
+                    className={`absolute border-2 rounded-lg flex items-center justify-center cursor-pointer transition-colors ${
+                      selectedZoneId === zone.id
+                        ? "border-orange-500 bg-orange-400/40"
+                        : zone.status === "ISSUE" ? "border-red-400 bg-red-300/25"
+                        : zone.status === "OK" ? "border-green-400 bg-green-300/25"
+                        : "border-slate-400/80 bg-white/15 hover:border-blue-400 hover:bg-blue-200/25"
+                    }`}
+                    style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.width}%`, height: `${zone.height}%` }}
+                  >
+                    <span className="text-[6px] font-black text-white drop-shadow uppercase text-center px-0.5 leading-tight">{zone.name}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Buttons under map */}
+              <div className="flex gap-2">
+                <button onClick={() => bgInputRef.current?.click()} disabled={isUploadingBg}
+                  className="flex-1 py-1.5 bg-blue-600 text-white rounded-lg font-black text-[9px] uppercase shadow hover:bg-blue-700 transition-all">
+                  {isUploadingBg ? "SUBIENDO..." : backgroundImage ? "CAMBIAR PLANO" : "📁 CARGAR PLANO"}
+                </button>
+                {backgroundImage && (
+                  <button onClick={onBgRemove}
+                    className="py-1.5 px-3 bg-red-50 text-red-500 border border-red-200 rounded-lg font-black text-[9px] uppercase hover:bg-red-100 transition-all">
+                    QUITAR
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* ── Panel derecho ── */}
+            <div className="flex-1 min-w-0 space-y-3">
+
+              {/* Controles del plano (solo si hay imagen) */}
+              {backgroundImage && (
+                <div className="space-y-2 pb-3 border-b border-slate-100">
+                  <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest">Ajuste del plano</p>
+                  <SliderRow label="Zoom" value={bgZoom} min={50} fixedMax={300} accent="accent-blue-500"
+                    onDec={() => onBgZoom(Math.max(50, bgZoom - 5))}
+                    onInc={() => onBgZoom(Math.min(300, bgZoom + 5))}
+                    onDrag={onBgZoom}
+                    onCommit={onBgZoom}
+                    onReset={() => onBgZoom(100)} />
+                  <SliderRow label="Horiz." value={bgOffsetX} min={0} fixedMax={100} accent="accent-blue-500"
+                    onDec={() => onBgOffsetX(Math.max(0, bgOffsetX - 5))}
+                    onInc={() => onBgOffsetX(Math.min(100, bgOffsetX + 5))}
+                    onDrag={onBgOffsetX}
+                    onCommit={onBgOffsetX}
+                    onReset={() => onBgOffsetX(50)} />
+                  <SliderRow label="Vert." value={bgOffsetY} min={0} fixedMax={100} accent="accent-blue-500"
+                    onDec={() => onBgOffsetY(Math.max(0, bgOffsetY - 5))}
+                    onInc={() => onBgOffsetY(Math.min(100, bgOffsetY + 5))}
+                    onDrag={onBgOffsetY}
+                    onCommit={onBgOffsetY}
+                    onReset={() => onBgOffsetY(50)} />
+                </div>
+              )}
+
+              {/* Controles de zona seleccionada */}
+              {selectedZone ? (
+                <div className="space-y-2">
+                  <p className="text-[8px] font-black text-orange-500 uppercase tracking-widest">📐 Zona: {selectedZone.name}</p>
+                  {/* Posición — max fijo a 95 para evitar que X/Y cambien al tocar W/H */}
+                  <SliderRow label="Pos X" value={selectedZone.x} min={0} fixedMax={95} accent="accent-orange-500"
+                    onDec={() => {
+                      const v = Math.max(0, selectedZone.x - 2);
+                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z));
+                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z));
+                    }}
+                    onInc={() => {
+                      const v = Math.min(95, selectedZone.x + 2);
+                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z));
+                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z));
+                    }}
+                    onDrag={v => updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z))}
+                    onCommit={v => commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z))} />
+                  <SliderRow label="Pos Y" value={selectedZone.y} min={0} fixedMax={95} accent="accent-orange-500"
+                    onDec={() => {
+                      const v = Math.max(0, selectedZone.y - 2);
+                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z));
+                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z));
+                    }}
+                    onInc={() => {
+                      const v = Math.min(95, selectedZone.y + 2);
+                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z));
+                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z));
+                    }}
+                    onDrag={v => updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z))}
+                    onCommit={v => commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z))} />
+                  {/* Tamaño — max fijo a 90 */}
+                  <SliderRow label="Ancho" value={selectedZone.width} min={5} fixedMax={90} accent="accent-orange-500"
+                    onDec={() => {
+                      const v = Math.max(5, selectedZone.width - 2);
+                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z));
+                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z));
+                    }}
+                    onInc={() => {
+                      const v = Math.min(90, selectedZone.width + 2);
+                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z));
+                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z));
+                    }}
+                    onDrag={v => updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z))}
+                    onCommit={v => commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z))} />
+                  <SliderRow label="Alto" value={selectedZone.height} min={5} fixedMax={90} accent="accent-orange-500"
+                    onDec={() => {
+                      const v = Math.max(5, selectedZone.height - 2);
+                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z));
+                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z));
+                    }}
+                    onInc={() => {
+                      const v = Math.min(90, selectedZone.height + 2);
+                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z));
+                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z));
+                    }}
+                    onDrag={v => updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z))}
+                    onCommit={v => commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z))} />
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-6 text-center opacity-40">
+                  <p className="text-2xl mb-1">👆</p>
+                  <p className="text-[9px] font-black text-slate-500 uppercase">Toca una zona en el mapa para ajustarla</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Zonas de Inspección — lista acordeón ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex items-center gap-3">
+          <div className="w-8 h-8 bg-orange-100 rounded-xl flex items-center justify-center">📐</div>
+          <div>
+            <h3 className="font-black text-slate-800 text-sm">Zonas de Inspección</h3>
+            <p className="text-[9px] text-slate-400 font-bold uppercase">Crear · renombrar · eliminar</p>
+          </div>
+        </div>
+        <div className="p-4 space-y-3">
+          <div className="flex gap-2">
+            <input value={newZoneName} onChange={e => setNewZoneName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleAddZone()}
+              placeholder="Nombre de nueva zona..."
+              className="flex-1 px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-medium focus:border-blue-500 outline-none transition-all" />
+            <button onClick={handleAddZone} disabled={!newZoneName.trim()}
+              className={`px-3 py-2 rounded-xl font-black text-xs uppercase transition-all ${newZoneName.trim() ? "bg-slate-900 text-white hover:bg-black shadow" : "bg-slate-100 text-slate-300"}`}>
+              + ADD
+            </button>
+          </div>
+
+          <div className="space-y-1.5">
+            {draftZones.map(zone => {
+              const isSelected = selectedZoneId === zone.id;
+              const isEditing = editingZoneId === zone.id;
+              return (
+                <div key={zone.id} className={`border-2 rounded-xl overflow-hidden transition-all ${isSelected ? "border-orange-300" : "border-slate-100"}`}>
+                  <div
+                    className={`flex items-center justify-between px-3 py-2 cursor-pointer transition-all ${isSelected ? "bg-orange-50" : "hover:bg-slate-50"}`}
+                    onClick={() => !isEditing && setSelectedZoneId(isSelected ? null : zone.id)}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${zone.status === "OK" ? "bg-green-500" : zone.status === "ISSUE" ? "bg-red-500 animate-pulse" : "bg-slate-300"}`} />
+                      {isEditing ? (
+                        <input autoFocus value={editingZoneName}
+                          onChange={e => setEditingZoneName(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") handleSaveZoneName(zone.id); if (e.key === "Escape") setEditingZoneId(null); }}
+                          onClick={e => e.stopPropagation()}
+                          className="flex-1 px-2 py-0.5 text-xs font-black bg-white border-2 border-blue-400 rounded-lg outline-none min-w-0" />
+                      ) : (
+                        <span className="font-black text-slate-800 text-xs truncate">{zone.name}</span>
+                      )}
+                      <span className="text-[7px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0">{zone.status}</span>
+                    </div>
+                    <div className="flex items-center gap-1 ml-2 shrink-0">
+                      {isEditing ? (
+                        <>
+                          <button onClick={e => { e.stopPropagation(); handleSaveZoneName(zone.id); }}
+                            className="px-2 h-6 bg-green-600 text-white rounded-md font-black text-[8px] hover:bg-green-700">✓</button>
+                          <button onClick={e => { e.stopPropagation(); setEditingZoneId(null); }}
+                            className="px-2 h-6 bg-slate-200 text-slate-600 rounded-md font-black text-[8px] hover:bg-slate-300">✕</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={e => { e.stopPropagation(); setEditingZoneId(zone.id); setEditingZoneName(zone.name); }}
+                            className="w-6 h-6 bg-blue-50 text-blue-500 rounded-md flex items-center justify-center hover:bg-blue-100 transition-all" title="Renombrar">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          </button>
+                          <button onClick={e => { e.stopPropagation(); setZoneToDelete(zone); setDeleteWord(""); }}
+                            className="w-6 h-6 bg-red-50 text-red-500 rounded-md flex items-center justify-center text-[10px] hover:bg-red-100 font-black">✕</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Eliminar Historial Completo ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex items-center gap-3">
+          <div className="w-8 h-8 bg-red-100 rounded-xl flex items-center justify-center">⚠️</div>
+          <div>
+            <h3 className="font-black text-slate-800 text-sm">Eliminar Historial Completo</h3>
+            <p className="text-[9px] text-red-400 font-bold uppercase">Acción irreversible</p>
+          </div>
+        </div>
+        <div className="p-4">
+          <div className="bg-red-50 border-2 border-red-100 rounded-2xl p-4">
+            <p className="text-[10px] font-black text-red-600 uppercase tracking-wide mb-2">
+              Se eliminarán todas las auditorías realizadas, junto con hallazgos e imágenes registradas.
+            </p>
+            <p className="text-[10px] text-slate-500 mb-3">Esta acción no se puede deshacer.</p>
+            <button onClick={() => setShowDeleteConfirm(true)}
+              className="w-full py-3 bg-red-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg">
+              🗑 BORRAR TODO EL HISTORIAL
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal confirmar borrar zona */}
+      {zoneToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-red-200 overflow-hidden">
+            <div className="p-6 bg-red-600 text-white text-center">
+              <p className="text-4xl mb-2">⚠️</p>
+              <h3 className="text-xl font-black">¿Eliminar zona?</h3>
+              <p className="text-red-100 text-sm mt-1 font-bold">"{zoneToDelete.name}"</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-600 text-center">Se eliminará la zona permanentemente.</p>
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 text-center">
+                  Escribe <span className="text-red-600 font-black">BORRAR</span> para confirmar
+                </label>
+                <input value={deleteWord} onChange={e => setDeleteWord(e.target.value)} placeholder="BORRAR"
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none transition-all" />
+              </div>
+            </div>
+            <div className="p-6 pt-0 flex gap-3">
+              <button onClick={() => { setZoneToDelete(null); setDeleteWord(""); }}
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50">CANCELAR</button>
+              <button disabled={deleteWord !== "BORRAR"} onClick={handleConfirmDeleteZone}
+                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all ${deleteWord === "BORRAR" ? "bg-red-600 hover:bg-red-700 shadow-lg" : "bg-slate-300"}`}>
+                ELIMINAR ZONA
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmar borrar historial */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-red-200 overflow-hidden">
+            <div className="p-6 bg-red-600 text-white text-center">
+              <p className="text-4xl mb-2">⚠️</p>
+              <h3 className="text-xl font-black">¿Borrar todo?</h3>
+              <p className="text-red-100 text-xs mt-1">Esta acción es irreversible</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-slate-600 text-center">
+                Se eliminarán <strong>{inspectionCount} auditorías</strong> y <strong>{findingCount} hallazgos</strong> permanentemente.
+              </p>
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 text-center">
+                  Escribe <span className="text-red-600 font-black">BORRAR</span> para confirmar
+                </label>
+                <input value={histDeleteWord} onChange={e => setHistDeleteWord(e.target.value)} placeholder="BORRAR"
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none transition-all" />
+              </div>
+            </div>
+            <div className="p-6 pt-0 flex gap-3">
+              <button onClick={() => { setShowDeleteConfirm(false); setHistDeleteWord(""); }}
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50">CANCELAR</button>
+              <button disabled={histDeleteWord !== "BORRAR" || isDeleting} onClick={handleConfirmDeleteHistory}
+                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all ${histDeleteWord === "BORRAR" && !isDeleting ? "bg-red-600 hover:bg-red-700 shadow-lg" : "bg-slate-300"}`}>
+                {isDeleting ? "BORRANDO..." : "CONFIRMAR"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
   inspectionCount, findingCount, zones, backgroundImage,
   bgOffsetX, bgOffsetY, bgZoom, bgInputRef,
   onBgChange, onBgOffsetX, onBgOffsetY, onBgZoom, onBgRemove,
