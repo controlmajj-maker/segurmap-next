@@ -341,7 +341,6 @@ export default function SegurMapApp() {
     setZones(INITIAL_ZONES);
     setIsInspectionActive(false);
     setCurrentInspection(null);
-    setShowConfig(false);
   }
 
   // Safe boolean check — Postgres returns actual booleans but just in case
