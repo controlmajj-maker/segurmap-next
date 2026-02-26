@@ -173,12 +173,15 @@ export default function SegurMapApp() {
         // Zones config (layout/positions) takes priority over last inspection's colored zones
         if (cfgData.zones_config) {
           try {
+            console.log("[loadData] zones_config found, length:", cfgData.zones_config.length);
             const savedZones: Zone[] = JSON.parse(cfgData.zones_config);
             if (Array.isArray(savedZones) && savedZones.length > 0) {
+              console.log("[loadData] restoring", savedZones.length, "zones from config");
               setZones(savedZones);
             }
-          } catch { /* ignore malformed JSON */ }
+          } catch (e) { console.error("[loadData] zones_config parse error:", e); }
         } else {
+          console.log("[loadData] no zones_config in DB, using fallback");
           // Fall back to last inspection's zone colors only if no saved config
           const completedInsp = inspList.find((i: any) => !i.is_active && i.zones_data);
           if (completedInsp) setZones(completedInsp.zones_data);
@@ -190,19 +193,16 @@ export default function SegurMapApp() {
 
   useEffect(() => { loadData(); }, []); // eslint-disable-line
 
-  // ─── Persist app config to DB (debounced to avoid interrupting slider drag) ─
-  const saveConfigTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ─── Persist app config to DB — immediate direct fetch ──────────────────
   const saveConfig = useCallback((patch: Record<string, string | number>) => {
-    if (saveConfigTimer.current) clearTimeout(saveConfigTimer.current);
-    saveConfigTimer.current = setTimeout(async () => {
-      try {
-        await fetch("/api/config", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patch),
-        });
-      } catch { /* silent */ }
-    }, 600);
+    fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    })
+      .then(r => r.json())
+      .then(d => console.log("[saveConfig] saved:", Object.keys(patch), d))
+      .catch(e => console.error("[saveConfig] error:", e));
   }, []);
 
   async function handleStartInspection(title: string, location: string, inspector: string) {
@@ -374,8 +374,12 @@ export default function SegurMapApp() {
     setZones(INITIAL_ZONES);
     setIsInspectionActive(false);
     setCurrentInspection(null);
-    // Also clear zones_config from app config
-    await saveConfig({ zones_config: JSON.stringify(INITIAL_ZONES) });
+    // Reset zones_config in DB to initial zones
+    fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ zones_config: JSON.stringify(INITIAL_ZONES) }),
+    }).catch(() => {});
   }
 
   // Safe boolean check — Postgres returns actual booleans but just in case
@@ -388,7 +392,7 @@ export default function SegurMapApp() {
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
       <div className="text-center">
         <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-        <p className="text-slate-500 font-bold uppercase text-xs tracking-widest">Cargando App Amil...</p>
+        <p className="text-slate-500 font-bold uppercase text-xs tracking-widest">Cargando SegurMap...</p>
       </div>
     </div>
   );
@@ -812,6 +816,7 @@ export default function SegurMapApp() {
             bgOffsetY={bgOffsetY}
             bgZoom={bgZoom}
             bgInputRef={bgInputRef}
+            saveConfig={saveConfig}
             onBgChange={async (file) => {
               const formData = new FormData();
               formData.append("file", file);
@@ -819,11 +824,11 @@ export default function SegurMapApp() {
               const res = await fetch("/api/upload", { method: "POST", body: formData });
               const data = await res.json();
               setBackgroundImage(data.url);
-              await saveConfig({ bg_url: data.url });
+              saveConfig({ bg_url: data.url });
             }}
-            onBgOffsetX={(v) => { setBgOffsetX(v); saveConfig({ bg_offset_x: v }); }}
-            onBgOffsetY={(v) => { setBgOffsetY(v); saveConfig({ bg_offset_y: v }); }}
-            onBgZoom={(v) => { setBgZoom(v); saveConfig({ bg_zoom: v }); }}
+            onBgOffsetX={setBgOffsetX}
+            onBgOffsetY={setBgOffsetY}
+            onBgZoom={setBgZoom}
             onBgRemove={() => {
               if (backgroundImage) {
                 fetch("/api/upload", {
@@ -834,10 +839,7 @@ export default function SegurMapApp() {
               setBackgroundImage(undefined);
               saveConfig({ bg_url: "" });
             }}
-            onZonesChange={(newZones) => {
-              setZones(newZones);
-              saveConfig({ zones_config: JSON.stringify(newZones) });
-            }}
+            onZonesChange={setZones}
             onDeleteAll={handleDeleteAll}
           />
         )}
@@ -1416,10 +1418,11 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
   );
 }
 
+
 // ─── Config Page ──────────────────────────────────────────────────────────────
 function ConfigPage({
   inspectionCount, findingCount, zones, backgroundImage,
-  bgOffsetX, bgOffsetY, bgZoom, bgInputRef,
+  bgOffsetX, bgOffsetY, bgZoom, bgInputRef, saveConfig,
   onBgChange, onBgOffsetX, onBgOffsetY, onBgZoom, onBgRemove,
   onZonesChange, onDeleteAll,
 }: {
@@ -1431,6 +1434,7 @@ function ConfigPage({
   bgOffsetY: number;
   bgZoom: number;
   bgInputRef: React.RefObject<HTMLInputElement>;
+  saveConfig: (patch: Record<string, string | number>) => void;
   onBgChange: (f: File) => Promise<void>;
   onBgOffsetX: (v: number) => void;
   onBgOffsetY: (v: number) => void;
@@ -1450,22 +1454,37 @@ function ConfigPage({
   const [histDeleteWord, setHistDeleteWord] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Local draft of zones — avoids re-renders mid-drag that break sliders
-  const [draftZones, setDraftZones] = useState<Zone[]>(zones);
-  // Sync when parent zones change (e.g. on load)
-  useEffect(() => { setDraftZones(zones); }, [zones]);
+  // Local copy of zones for immediate UI — synced from parent on load only (not on every render)
+  const [localZones, setLocalZones] = useState<Zone[]>(zones);
+  const zonesLoadedRef = useRef(false);
+  useEffect(() => {
+    // Only sync from parent when zones actually change from outside (e.g. initial load)
+    if (!zonesLoadedRef.current || zones.length !== localZones.length) {
+      setLocalZones(zones);
+      zonesLoadedRef.current = true;
+    }
+  }, [zones]); // eslint-disable-line
 
-  // Commit draft to parent + persist (called on slider mouseUp / button click)
-  const commitZones = useCallback((updated: Zone[]) => {
-    setDraftZones(updated);
+  // Save zones: update local state + parent state + persist to DB directly
+  const saveZones = useCallback((updated: Zone[]) => {
+    console.log("[saveZones] saving", updated.length, "zones");
+    setLocalZones(updated);
     onZonesChange(updated);
+    // Direct fetch — no debounce, no intermediary
+    const body = JSON.stringify({ zones_config: JSON.stringify(updated) });
+    fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body,
+    })
+      .then(r => r.json())
+      .then(d => console.log("[saveZones] DB response:", d))
+      .catch(e => console.error("[saveZones] fetch error:", e));
   }, [onZonesChange]);
 
-  // Update draft only (during drag — no parent call, no re-render cascade)
-  const updateDraft = useCallback((updated: Zone[]) => {
-    setDraftZones(updated);
-  }, []);
+  const selectedZone = localZones.find(z => z.id === selectedZoneId) ?? null;
 
+  // Zone CRUD
   const handleAddZone = () => {
     if (!newZoneName.trim()) return;
     const newZone: Zone = {
@@ -1475,25 +1494,24 @@ function ConfigPage({
       x: 10, y: 10, width: 25, height: 25,
       findings: {},
     };
-    const updated = [...draftZones, newZone];
-    commitZones(updated);
+    saveZones([...localZones, newZone]);
     setNewZoneName("");
     setSelectedZoneId(newZone.id);
   };
 
   const handleSaveZoneName = (zoneId: string) => {
     if (!editingZoneName.trim()) return;
-    commitZones(draftZones.map(z => z.id === zoneId ? { ...z, name: editingZoneName.trim() } : z));
+    saveZones(localZones.map(z => z.id === zoneId ? { ...z, name: editingZoneName.trim() } : z));
     setEditingZoneId(null);
     setEditingZoneName("");
   };
 
   const handleConfirmDeleteZone = () => {
     if (!zoneToDelete || deleteWord !== "BORRAR") return;
-    commitZones(draftZones.filter(z => z.id !== zoneToDelete.id));
+    saveZones(localZones.filter(z => z.id !== zoneToDelete.id));
+    if (selectedZoneId === zoneToDelete.id) setSelectedZoneId(null);
     setZoneToDelete(null);
     setDeleteWord("");
-    if (selectedZoneId === zoneToDelete.id) setSelectedZoneId(null);
   };
 
   const handleConfirmDeleteHistory = async () => {
@@ -1505,7 +1523,11 @@ function ConfigPage({
     setHistDeleteWord("");
   };
 
-  const selectedZone = draftZones.find(z => z.id === selectedZoneId) ?? null;
+  // Update a single zone property and save
+  const updateZoneProp = (zoneId: string, prop: keyof Zone, value: number) => {
+    const updated = localZones.map(z => z.id === zoneId ? { ...z, [prop]: value } : z);
+    saveZones(updated);
+  };
 
   const bgStyle: React.CSSProperties = backgroundImage ? {
     backgroundImage: `url(${backgroundImage})`,
@@ -1514,34 +1536,62 @@ function ConfigPage({
     backgroundRepeat: "no-repeat",
   } : {};
 
-  // Compact slider row — max is FIXED (passed as prop, not re-derived mid-render)
-  const SliderRow = ({ label, value, fixedMax, min, accent, onDec, onInc, onDrag, onCommit, onReset }: {
-    label: string; value: number; min: number; fixedMax: number; accent: string;
-    onDec: () => void; onInc: () => void;
-    onDrag: (v: number) => void;   // called during drag (updates draft only)
-    onCommit: (v: number) => void; // called on mouseUp/touchEnd (persists)
-    onReset?: () => void;
-  }) => (
-    <div className="flex items-center gap-1.5">
-      <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0 leading-tight">{label}<br/><span className="text-slate-600">{Math.round(value)}</span></span>
-      <button onMouseDown={e => { e.preventDefault(); onDec(); }}
-        className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 active:bg-slate-300 shrink-0 select-none">−</button>
-      <input
-        type="range" min={min} max={fixedMax} value={value}
-        onChange={e => onDrag(Number(e.target.value))}
-        onMouseUp={e => onCommit(Number((e.target as HTMLInputElement).value))}
-        onTouchEnd={e => onCommit(Number((e.target as HTMLInputElement).value))}
-        className={`flex-1 ${accent} cursor-pointer`}
-        style={{ height: "18px", accentColor: undefined }}
-      />
-      <button onMouseDown={e => { e.preventDefault(); onInc(); }}
-        className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 active:bg-slate-300 shrink-0 select-none">+</button>
-      {onReset && (
-        <button onMouseDown={e => { e.preventDefault(); onReset(); }}
-          className="w-6 h-6 bg-slate-100 rounded-md font-black text-[8px] hover:bg-slate-200 shrink-0 select-none">↺</button>
-      )}
-    </div>
-  );
+  // Slider component — uses local state during drag, saves on mouseUp
+  function ZoneSlider({ label, value, min, max, onChange }: {
+    label: string; value: number; min: number; max: number;
+    onChange: (v: number) => void;
+  }) {
+    const [local, setLocal] = useState(value);
+    useEffect(() => { setLocal(value); }, [value]);
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0 leading-tight">
+          {label}<br/><span className="text-slate-700">{Math.round(local)}</span>
+        </span>
+        <button
+          onClick={() => { const v = Math.max(min, local - 2); setLocal(v); onChange(v); }}
+          className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">−</button>
+        <input
+          type="range" min={min} max={max} value={local}
+          onChange={e => setLocal(Number(e.target.value))}
+          onMouseUp={e => onChange(Number((e.target as HTMLInputElement).value))}
+          onTouchEnd={e => onChange(Number((e.target as HTMLInputElement).value))}
+          className="flex-1 h-4 cursor-pointer"
+          style={{ accentColor: "#f97316" }}
+        />
+        <button
+          onClick={() => { const v = Math.min(max, local + 2); setLocal(v); onChange(v); }}
+          className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">+</button>
+      </div>
+    );
+  }
+
+  function BgSlider({ label, value, min, max, onChange }: {
+    label: string; value: number; min: number; max: number;
+    onChange: (v: number) => void;
+  }) {
+    const [local, setLocal] = useState(value);
+    useEffect(() => { setLocal(value); }, [value]);
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0 leading-tight">
+          {label}<br/><span className="text-slate-700">{Math.round(local)}</span>
+        </span>
+        <button
+          onClick={() => { const v = Math.max(min, local - 5); setLocal(v); onChange(v); }}
+          className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">−</button>
+        <input
+          type="range" min={min} max={max} value={local}
+          onChange={e => { const v = Number(e.target.value); setLocal(v); onChange(v); }}
+          className="flex-1 h-4 cursor-pointer"
+          style={{ accentColor: "#3b82f6" }}
+        />
+        <button
+          onClick={() => { const v = Math.min(max, local + 5); setLocal(v); onChange(v); }}
+          className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">+</button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
@@ -1559,15 +1609,16 @@ function ConfigPage({
         </div>
       </div>
 
-      {/* ── Plano de Planta + Zonas — layout lateral siempre visible ── */}
+      {/* ── Plano + Zonas ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">🗺️</div>
-          <div>
+          <div className="flex-1">
             <h3 className="font-black text-slate-800 text-sm">Plano y Zonas</h3>
-            <p className="text-[9px] text-slate-400 font-bold uppercase">Selecciona una zona para ajustarla · los cambios se guardan automáticamente</p>
+            <p className="text-[9px] text-slate-400 font-bold uppercase">Selecciona una zona en el mapa para ajustarla</p>
           </div>
         </div>
+
         <div className="p-4">
           <input ref={bgInputRef} type="file" accept="image/*" className="hidden"
             onChange={async e => {
@@ -1580,38 +1631,35 @@ function ConfigPage({
           />
 
           <div className="flex flex-col lg:flex-row gap-4">
-            {/* ── Canvas (siempre visible) ── */}
+
+            {/* Canvas del mapa — siempre visible */}
             <div className="lg:w-[420px] shrink-0 space-y-2">
-              {/* Map preview */}
               <div
-                className="relative w-full rounded-xl border-2 border-slate-200 overflow-hidden shadow-inner bg-slate-100"
+                className="relative w-full rounded-xl border-2 border-slate-200 overflow-hidden bg-slate-100"
                 style={{ aspectRatio: "16/9", ...(backgroundImage ? bgStyle : {}) }}
               >
                 {!backgroundImage && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center opacity-20 pointer-events-none">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none opacity-30">
                     <p className="text-3xl">🗺️</p>
-                    <p className="text-[9px] font-black uppercase text-slate-500 mt-1">Sin plano cargado</p>
+                    <p className="text-[9px] font-black text-slate-600 uppercase mt-1">Sin plano</p>
                   </div>
                 )}
-                {draftZones.map(zone => (
-                  <div
-                    key={zone.id}
+                {localZones.map(zone => (
+                  <div key={zone.id}
                     onClick={() => setSelectedZoneId(selectedZoneId === zone.id ? null : zone.id)}
                     className={`absolute border-2 rounded-lg flex items-center justify-center cursor-pointer transition-colors ${
-                      selectedZoneId === zone.id
-                        ? "border-orange-500 bg-orange-400/40"
-                        : zone.status === "ISSUE" ? "border-red-400 bg-red-300/25"
-                        : zone.status === "OK" ? "border-green-400 bg-green-300/25"
-                        : "border-slate-400/80 bg-white/15 hover:border-blue-400 hover:bg-blue-200/25"
+                      selectedZoneId === zone.id ? "border-orange-500 bg-orange-400/40"
+                      : zone.status === "ISSUE" ? "border-red-400 bg-red-300/25"
+                      : zone.status === "OK" ? "border-green-400 bg-green-300/25"
+                      : "border-white/70 bg-white/10 hover:border-blue-400 hover:bg-blue-200/25"
                     }`}
-                    style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.width}%`, height: `${zone.height}%` }}
+                    style={{ left:`${zone.x}%`, top:`${zone.y}%`, width:`${zone.width}%`, height:`${zone.height}%` }}
                   >
                     <span className="text-[6px] font-black text-white drop-shadow uppercase text-center px-0.5 leading-tight">{zone.name}</span>
                   </div>
                 ))}
               </div>
 
-              {/* Buttons under map */}
               <div className="flex gap-2">
                 <button onClick={() => bgInputRef.current?.click()} disabled={isUploadingBg}
                   className="flex-1 py-1.5 bg-blue-600 text-white rounded-lg font-black text-[9px] uppercase shadow hover:bg-blue-700 transition-all">
@@ -1619,104 +1667,46 @@ function ConfigPage({
                 </button>
                 {backgroundImage && (
                   <button onClick={onBgRemove}
-                    className="py-1.5 px-3 bg-red-50 text-red-500 border border-red-200 rounded-lg font-black text-[9px] uppercase hover:bg-red-100 transition-all">
+                    className="py-1.5 px-3 bg-red-50 text-red-500 border border-red-200 rounded-lg font-black text-[9px] uppercase hover:bg-red-100">
                     QUITAR
                   </button>
                 )}
               </div>
             </div>
 
-            {/* ── Panel derecho ── */}
-            <div className="flex-1 min-w-0 space-y-3">
+            {/* Panel derecho con controles */}
+            <div className="flex-1 min-w-0 space-y-4">
 
-              {/* Controles del plano (solo si hay imagen) */}
+              {/* Controles de plano */}
               {backgroundImage && (
                 <div className="space-y-2 pb-3 border-b border-slate-100">
                   <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest">Ajuste del plano</p>
-                  <SliderRow label="Zoom" value={bgZoom} min={50} fixedMax={300} accent="accent-blue-500"
-                    onDec={() => onBgZoom(Math.max(50, bgZoom - 5))}
-                    onInc={() => onBgZoom(Math.min(300, bgZoom + 5))}
-                    onDrag={onBgZoom}
-                    onCommit={onBgZoom}
-                    onReset={() => onBgZoom(100)} />
-                  <SliderRow label="Horiz." value={bgOffsetX} min={0} fixedMax={100} accent="accent-blue-500"
-                    onDec={() => onBgOffsetX(Math.max(0, bgOffsetX - 5))}
-                    onInc={() => onBgOffsetX(Math.min(100, bgOffsetX + 5))}
-                    onDrag={onBgOffsetX}
-                    onCommit={onBgOffsetX}
-                    onReset={() => onBgOffsetX(50)} />
-                  <SliderRow label="Vert." value={bgOffsetY} min={0} fixedMax={100} accent="accent-blue-500"
-                    onDec={() => onBgOffsetY(Math.max(0, bgOffsetY - 5))}
-                    onInc={() => onBgOffsetY(Math.min(100, bgOffsetY + 5))}
-                    onDrag={onBgOffsetY}
-                    onCommit={onBgOffsetY}
-                    onReset={() => onBgOffsetY(50)} />
+                  <BgSlider label="Zoom" value={bgZoom} min={50} max={300}
+                    onChange={v => { onBgZoom(v); saveConfig({ bg_zoom: v }); }} />
+                  <BgSlider label="Horiz." value={bgOffsetX} min={0} max={100}
+                    onChange={v => { onBgOffsetX(v); saveConfig({ bg_offset_x: v }); }} />
+                  <BgSlider label="Vert." value={bgOffsetY} min={0} max={100}
+                    onChange={v => { onBgOffsetY(v); saveConfig({ bg_offset_y: v }); }} />
                 </div>
               )}
 
               {/* Controles de zona seleccionada */}
               {selectedZone ? (
                 <div className="space-y-2">
-                  <p className="text-[8px] font-black text-orange-500 uppercase tracking-widest">📐 Zona: {selectedZone.name}</p>
-                  {/* Posición — max fijo a 95 para evitar que X/Y cambien al tocar W/H */}
-                  <SliderRow label="Pos X" value={selectedZone.x} min={0} fixedMax={95} accent="accent-orange-500"
-                    onDec={() => {
-                      const v = Math.max(0, selectedZone.x - 2);
-                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z));
-                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z));
-                    }}
-                    onInc={() => {
-                      const v = Math.min(95, selectedZone.x + 2);
-                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z));
-                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z));
-                    }}
-                    onDrag={v => updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z))}
-                    onCommit={v => commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, x: v } : z))} />
-                  <SliderRow label="Pos Y" value={selectedZone.y} min={0} fixedMax={95} accent="accent-orange-500"
-                    onDec={() => {
-                      const v = Math.max(0, selectedZone.y - 2);
-                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z));
-                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z));
-                    }}
-                    onInc={() => {
-                      const v = Math.min(95, selectedZone.y + 2);
-                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z));
-                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z));
-                    }}
-                    onDrag={v => updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z))}
-                    onCommit={v => commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, y: v } : z))} />
-                  {/* Tamaño — max fijo a 90 */}
-                  <SliderRow label="Ancho" value={selectedZone.width} min={5} fixedMax={90} accent="accent-orange-500"
-                    onDec={() => {
-                      const v = Math.max(5, selectedZone.width - 2);
-                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z));
-                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z));
-                    }}
-                    onInc={() => {
-                      const v = Math.min(90, selectedZone.width + 2);
-                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z));
-                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z));
-                    }}
-                    onDrag={v => updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z))}
-                    onCommit={v => commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, width: v } : z))} />
-                  <SliderRow label="Alto" value={selectedZone.height} min={5} fixedMax={90} accent="accent-orange-500"
-                    onDec={() => {
-                      const v = Math.max(5, selectedZone.height - 2);
-                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z));
-                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z));
-                    }}
-                    onInc={() => {
-                      const v = Math.min(90, selectedZone.height + 2);
-                      updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z));
-                      commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z));
-                    }}
-                    onDrag={v => updateDraft(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z))}
-                    onCommit={v => commitZones(draftZones.map(z => z.id === selectedZone.id ? { ...z, height: v } : z))} />
+                  <p className="text-[8px] font-black text-orange-500 uppercase tracking-widest">📐 {selectedZone.name}</p>
+                  <ZoneSlider label="Pos X" value={selectedZone.x} min={0} max={95}
+                    onChange={v => updateZoneProp(selectedZone.id, "x", v)} />
+                  <ZoneSlider label="Pos Y" value={selectedZone.y} min={0} max={95}
+                    onChange={v => updateZoneProp(selectedZone.id, "y", v)} />
+                  <ZoneSlider label="Ancho" value={selectedZone.width} min={5} max={90}
+                    onChange={v => updateZoneProp(selectedZone.id, "width", v)} />
+                  <ZoneSlider label="Alto" value={selectedZone.height} min={5} max={90}
+                    onChange={v => updateZoneProp(selectedZone.id, "height", v)} />
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-6 text-center opacity-40">
-                  <p className="text-2xl mb-1">👆</p>
-                  <p className="text-[9px] font-black text-slate-500 uppercase">Toca una zona en el mapa para ajustarla</p>
+                <div className="flex flex-col items-center justify-center py-6 opacity-30">
+                  <p className="text-2xl">👆</p>
+                  <p className="text-[9px] font-black text-slate-500 uppercase mt-1">Toca una zona para ajustarla</p>
                 </div>
               )}
             </div>
@@ -1724,7 +1714,7 @@ function ConfigPage({
         </div>
       </div>
 
-      {/* ── Zonas de Inspección — lista acordeón ── */}
+      {/* ── Zonas de Inspección ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
           <div className="w-8 h-8 bg-orange-100 rounded-xl flex items-center justify-center">📐</div>
@@ -1746,17 +1736,17 @@ function ConfigPage({
           </div>
 
           <div className="space-y-1.5">
-            {draftZones.map(zone => {
+            {localZones.map(zone => {
               const isSelected = selectedZoneId === zone.id;
               const isEditing = editingZoneId === zone.id;
               return (
-                <div key={zone.id} className={`border-2 rounded-xl overflow-hidden transition-all ${isSelected ? "border-orange-300" : "border-slate-100"}`}>
+                <div key={zone.id} className={`border-2 rounded-xl overflow-hidden ${isSelected ? "border-orange-300" : "border-slate-100"}`}>
                   <div
-                    className={`flex items-center justify-between px-3 py-2 cursor-pointer transition-all ${isSelected ? "bg-orange-50" : "hover:bg-slate-50"}`}
+                    className={`flex items-center justify-between px-3 py-2 cursor-pointer ${isSelected ? "bg-orange-50" : "hover:bg-slate-50"}`}
                     onClick={() => !isEditing && setSelectedZoneId(isSelected ? null : zone.id)}
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${zone.status === "OK" ? "bg-green-500" : zone.status === "ISSUE" ? "bg-red-500 animate-pulse" : "bg-slate-300"}`} />
+                      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${zone.status === "OK" ? "bg-green-500" : zone.status === "ISSUE" ? "bg-red-500" : "bg-slate-300"}`} />
                       {isEditing ? (
                         <input autoFocus value={editingZoneName}
                           onChange={e => setEditingZoneName(e.target.value)}
@@ -1774,12 +1764,12 @@ function ConfigPage({
                           <button onClick={e => { e.stopPropagation(); handleSaveZoneName(zone.id); }}
                             className="px-2 h-6 bg-green-600 text-white rounded-md font-black text-[8px] hover:bg-green-700">✓</button>
                           <button onClick={e => { e.stopPropagation(); setEditingZoneId(null); }}
-                            className="px-2 h-6 bg-slate-200 text-slate-600 rounded-md font-black text-[8px] hover:bg-slate-300">✕</button>
+                            className="px-2 h-6 bg-slate-200 text-slate-600 rounded-md font-black text-[8px]">✕</button>
                         </>
                       ) : (
                         <>
                           <button onClick={e => { e.stopPropagation(); setEditingZoneId(zone.id); setEditingZoneName(zone.name); }}
-                            className="w-6 h-6 bg-blue-50 text-blue-500 rounded-md flex items-center justify-center hover:bg-blue-100 transition-all" title="Renombrar">
+                            className="w-6 h-6 bg-blue-50 text-blue-500 rounded-md flex items-center justify-center hover:bg-blue-100" title="Renombrar">
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                             </svg>
@@ -1813,14 +1803,14 @@ function ConfigPage({
             </p>
             <p className="text-[10px] text-slate-500 mb-3">Esta acción no se puede deshacer.</p>
             <button onClick={() => setShowDeleteConfirm(true)}
-              className="w-full py-3 bg-red-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-700 transition-all shadow-lg">
+              className="w-full py-3 bg-red-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-700 shadow-lg">
               🗑 BORRAR TODO EL HISTORIAL
             </button>
           </div>
         </div>
       </div>
 
-      {/* Modal confirmar borrar zona */}
+      {/* Modal borrar zona */}
       {zoneToDelete && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-red-200 overflow-hidden">
@@ -1830,28 +1820,27 @@ function ConfigPage({
               <p className="text-red-100 text-sm mt-1 font-bold">"{zoneToDelete.name}"</p>
             </div>
             <div className="p-6 space-y-4">
-              <p className="text-sm text-slate-600 text-center">Se eliminará la zona permanentemente.</p>
               <div>
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 text-center">
                   Escribe <span className="text-red-600 font-black">BORRAR</span> para confirmar
                 </label>
                 <input value={deleteWord} onChange={e => setDeleteWord(e.target.value)} placeholder="BORRAR"
-                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none transition-all" />
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none" />
               </div>
             </div>
             <div className="p-6 pt-0 flex gap-3">
               <button onClick={() => { setZoneToDelete(null); setDeleteWord(""); }}
-                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50">CANCELAR</button>
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500">CANCELAR</button>
               <button disabled={deleteWord !== "BORRAR"} onClick={handleConfirmDeleteZone}
-                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all ${deleteWord === "BORRAR" ? "bg-red-600 hover:bg-red-700 shadow-lg" : "bg-slate-300"}`}>
-                ELIMINAR ZONA
+                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white ${deleteWord === "BORRAR" ? "bg-red-600 hover:bg-red-700" : "bg-slate-300"}`}>
+                ELIMINAR
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal confirmar borrar historial */}
+      {/* Modal borrar historial */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-red-200 overflow-hidden">
@@ -1862,21 +1851,21 @@ function ConfigPage({
             </div>
             <div className="p-6 space-y-4">
               <p className="text-sm text-slate-600 text-center">
-                Se eliminarán <strong>{inspectionCount} auditorías</strong> y <strong>{findingCount} hallazgos</strong> permanentemente.
+                Se eliminarán <strong>{inspectionCount} auditorías</strong> y <strong>{findingCount} hallazgos</strong>.
               </p>
               <div>
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 text-center">
                   Escribe <span className="text-red-600 font-black">BORRAR</span> para confirmar
                 </label>
                 <input value={histDeleteWord} onChange={e => setHistDeleteWord(e.target.value)} placeholder="BORRAR"
-                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none transition-all" />
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none" />
               </div>
             </div>
             <div className="p-6 pt-0 flex gap-3">
               <button onClick={() => { setShowDeleteConfirm(false); setHistDeleteWord(""); }}
-                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50">CANCELAR</button>
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500">CANCELAR</button>
               <button disabled={histDeleteWord !== "BORRAR" || isDeleting} onClick={handleConfirmDeleteHistory}
-                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all ${histDeleteWord === "BORRAR" && !isDeleting ? "bg-red-600 hover:bg-red-700 shadow-lg" : "bg-slate-300"}`}>
+                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white ${histDeleteWord === "BORRAR" && !isDeleting ? "bg-red-600 hover:bg-red-700" : "bg-slate-300"}`}>
                 {isDeleting ? "BORRANDO..." : "CONFIRMAR"}
               </button>
             </div>
