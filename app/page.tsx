@@ -125,6 +125,7 @@ export default function SegurMapApp() {
   const [viewFinding, setViewFinding] = useState<Finding | null>(null);
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [showFinishConfirm, setShowFinishConfirm] = useState(false);
   const [expandedInspectionId, setExpandedInspectionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showNewInspectionModal, setShowNewInspectionModal] = useState(false);
@@ -597,6 +598,77 @@ export default function SegurMapApp() {
                 )}
               </div>
 
+              {/* ── Dashboard mini — solo cuando no hay inspección activa ── */}
+              {!isInspectionActive && (() => {
+                const lastCompleted = inspections.find((i: any) => !i.is_active);
+                const totalAuditorias = inspections.filter((i: any) => !i.is_active).length;
+                const totalHallazgos = allFindings.length;
+
+                // % evaluación de última inspección
+                let pct = 0;
+                let evalLabel = "Sin datos";
+                if (lastCompleted?.zones_data && Array.isArray(lastCompleted.zones_data) && lastCompleted.zones_data.length > 0) {
+                  const total = lastCompleted.zones_data.length;
+                  const evaluated = (lastCompleted.zones_data as Zone[]).filter(z => z.status !== "PENDING").length;
+                  pct = total > 0 ? Math.round((evaluated / total) * 100) : 0;
+                  evalLabel = `${evaluated}/${total} zonas`;
+                }
+
+                if (totalAuditorias === 0) return null;
+
+                // SVG arc para el gauge circular
+                const r = 28;
+                const cx = 36;
+                const cy = 36;
+                const circumference = 2 * Math.PI * r;
+                const dashOffset = circumference * (1 - pct / 100);
+                const gaugeColor = pct === 100 ? "#16a34a" : pct >= 50 ? "#2563eb" : "#f97316";
+
+                return (
+                  <div className="grid grid-cols-3 gap-3 mb-4">
+                    {/* Gauge evaluación */}
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 flex flex-col items-center justify-center">
+                      <svg width="72" height="72" viewBox="0 0 72 72">
+                        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#f1f5f9" strokeWidth="7" />
+                        <circle
+                          cx={cx} cy={cy} r={r}
+                          fill="none"
+                          stroke={gaugeColor}
+                          strokeWidth="7"
+                          strokeDasharray={circumference}
+                          strokeDashoffset={dashOffset}
+                          strokeLinecap="round"
+                          transform={`rotate(-90 ${cx} ${cy})`}
+                          style={{ transition: "stroke-dashoffset 0.6s ease" }}
+                        />
+                        <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle"
+                          fontSize="13" fontWeight="900" fill="#1e293b">{pct}%</text>
+                      </svg>
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1 text-center leading-tight">
+                        Evaluación<br/>
+                        <span className="text-slate-600">{evalLabel}</span>
+                      </p>
+                    </div>
+
+                    {/* Total auditorías */}
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 flex flex-col items-center justify-center text-center">
+                      <p className="text-3xl font-black text-slate-800 leading-none">{totalAuditorias}</p>
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-2 leading-tight">
+                        Auditorías<br/>totales
+                      </p>
+                    </div>
+
+                    {/* Total hallazgos */}
+                    <div className={`rounded-2xl border shadow-sm p-3 flex flex-col items-center justify-center text-center ${totalHallazgos > 0 ? "bg-red-50 border-red-100" : "bg-white border-slate-100"}`}>
+                      <p className={`text-3xl font-black leading-none ${totalHallazgos > 0 ? "text-red-600" : "text-slate-800"}`}>{totalHallazgos}</p>
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-2 leading-tight">
+                        Hallazgos<br/>totales
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* ── Lista vertical de zonas ── */}
               <div className="space-y-2">
                 {zones.map(zone => {
@@ -668,23 +740,23 @@ export default function SegurMapApp() {
                 <div className={`p-6 md:p-8 rounded-3xl text-white flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl border-b-4 ${allDone ? "bg-slate-900 border-blue-600" : "bg-slate-800 border-orange-500"}`}>
                   <div>
                     <h3 className={`text-xl md:text-2xl font-black mb-1 ${allDone ? "text-blue-400" : "text-orange-400"}`}>
-                      {allDone ? "Recorrido Completo" : "Listo para sellar"}
+                      {allDone ? "Listo para finalizar recorrido" : "Listo para finalizar recorrido"}
                     </h3>
                     <p className="text-slate-400 text-sm">
                       {allDone
-                        ? "Todas las zonas evaluadas. Sella el informe."
-                        : `${evaluatedZones} de ${totalZones} zona${totalZones !== 1 ? "s" : ""} evaluada${evaluatedZones !== 1 ? "s" : ""}. Puedes sellar ahora o continuar el recorrido.`
+                        ? "Todas las zonas evaluadas. Puedes finalizar la evaluación."
+                        : `${evaluatedZones} de ${totalZones} zona${totalZones !== 1 ? "s" : ""} evaluada${evaluatedZones !== 1 ? "s" : ""}. Puedes finalizar ahora o continuar el recorrido.`
                       }
                     </p>
                   </div>
                   <button
-                    onClick={handleFinishInspection}
+                    onClick={() => setShowFinishConfirm(true)}
                     disabled={isFinishing}
                     className="w-full sm:w-auto bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-lg hover:bg-blue-700 transition-all shadow-xl flex items-center justify-center gap-3"
                   >
                     {isFinishing
                       ? <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> GENERANDO CON IA...</>
-                      : <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> SELLAR INFORME</>
+                      : <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> FINALIZAR EVALUACIÓN</>
                     }
                   </button>
                 </div>
@@ -1064,6 +1136,42 @@ export default function SegurMapApp() {
                 className="flex-1 py-3 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 transition-all shadow-lg"
               >
                 SÍ, CANCELAR
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal confirmar finalizar evaluación ── */}
+      {showFinishConfirm && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur flex items-center justify-center z-[200] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-blue-100 overflow-hidden">
+            <div className="p-6 bg-blue-50 border-b text-center">
+              <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                <svg className="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-black text-slate-800">¿Finalizar evaluación?</h3>
+              <p className="text-slate-500 text-sm mt-1">
+                {pendingZones > 0
+                  ? `Aún tienes ${pendingZones} zona${pendingZones !== 1 ? "s" : ""} sin evaluar. Puedes finalizar ahora o continuar el recorrido.`
+                  : "Todas las zonas han sido evaluadas. Se generará el informe con IA."}
+              </p>
+            </div>
+            <div className="p-6 flex gap-3">
+              <button
+                onClick={() => setShowFinishConfirm(false)}
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-600 hover:bg-slate-50 transition-all"
+              >
+                CONTINUAR RECORRIDO
+              </button>
+              <button
+                onClick={() => { setShowFinishConfirm(false); handleFinishInspection(); }}
+                disabled={isFinishing}
+                className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black text-xs uppercase hover:bg-blue-700 transition-all shadow-lg disabled:bg-slate-300"
+              >
+                FINALIZAR
               </button>
             </div>
           </div>
