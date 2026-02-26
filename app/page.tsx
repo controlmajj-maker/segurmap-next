@@ -590,17 +590,22 @@ export default function SegurMapApp() {
         {/* ── CURRENT VIEW ── */}
         {view === "current" && (
           <div className="space-y-6">
-            <div className={`relative overflow-hidden rounded-3xl shadow-xl border transition-all duration-700 ${
+            <div className={`relative overflow-hidden rounded-3xl shadow-xl transition-all duration-700 ${
               isInspectionActive
-                ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 border-blue-500/30"
-                : "bg-white border-slate-100"
-            } p-4 md:p-8`}>
+                ? "bg-white border-2 border-blue-400"
+                : "bg-white border border-slate-100"
+            } p-4 md:p-8`}
+              style={isInspectionActive ? {
+                boxShadow: "0 0 0 3px rgba(59,130,246,0.15), 0 20px 40px -8px rgba(59,130,246,0.12)"
+              } : {}}>
 
-              {/* Fondo animado solo durante inspección activa */}
+              {/* Pulso sutil en esquina superior derecha solo durante inspección activa */}
               {isInspectionActive && (
-                <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                  <div className="absolute -top-24 -right-24 w-72 h-72 bg-blue-600/10 rounded-full blur-3xl animate-pulse" />
-                  <div className="absolute -bottom-16 -left-16 w-56 h-56 bg-violet-600/10 rounded-full blur-3xl animate-pulse" style={{animationDelay:"1s"}} />
+                <div className="absolute top-4 right-4 pointer-events-none">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500" />
+                  </span>
                 </div>
               )}
 
@@ -609,14 +614,14 @@ export default function SegurMapApp() {
                   {/* Pill de estado */}
                   <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest mb-2 ${
                     isInspectionActive
-                      ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                      ? "bg-blue-50 text-blue-600 border border-blue-200"
                       : "bg-slate-100 text-slate-500 border border-slate-200"
                   }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${isInspectionActive ? "bg-blue-400 animate-pulse" : "bg-slate-400"}`} />
+                    <span className={`w-1.5 h-1.5 rounded-full ${isInspectionActive ? "bg-blue-500 animate-pulse" : "bg-slate-400"}`} />
                     {isInspectionActive ? "EN PROGRESO" : "ÚLTIMO RECORRIDO"}
                   </div>
 
-                  <h2 className={`text-2xl md:text-3xl font-black tracking-tight ${isInspectionActive ? "text-white" : "text-slate-800"}`}>
+                  <h2 className={`text-2xl md:text-3xl font-black tracking-tight ${isInspectionActive ? "text-slate-800" : "text-slate-800"}`}>
                     {isInspectionActive ? "Inspección Activa" : "Estado actual de la planta"}
                   </h2>
                   <p className={`text-xs font-bold uppercase tracking-widest mt-1 ${isInspectionActive ? "text-slate-400" : "text-slate-400"}`}>
@@ -746,12 +751,12 @@ export default function SegurMapApp() {
                   const rowClass    = isInspectionActive
                     ? isOK    ? "bg-green-50/40 border-green-200 hover:border-green-400 hover:bg-green-50/70"
                     : isISSUE ? "bg-red-50/40 border-red-200 hover:border-red-400 hover:bg-red-50/70"
-                    :           "bg-white/5 border-white/10 hover:border-blue-400/50 hover:bg-white/10"
+                    :           "bg-white border-slate-200 hover:border-blue-400 hover:bg-blue-50/30"
                     : isOK    ? "bg-green-50/40 border-green-100"
                     : isISSUE ? "bg-red-50/40 border-red-100"
                     :           "bg-white border-slate-100";
-                  const nameClass   = isInspectionActive ? "text-white" : "text-slate-800";
-                  const arrowClass  = isInspectionActive ? "text-white/30" : "text-slate-200";
+                  const nameClass   = isInspectionActive ? "text-slate-800" : "text-slate-800";
+                  const arrowClass  = isInspectionActive ? "text-slate-300" : "text-slate-200";
 
                   return (
                     <button
@@ -789,7 +794,7 @@ export default function SegurMapApp() {
 
                       {/* Etiqueta de estado */}
                       <span className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full border ${badgeClass}`}>
-                        {isOK ? "✓ OK" : isISSUE ? "ISSUE" : "—"}
+                        {isOK ? "✓ OK" : isISSUE ? "ISSUE" : "PENDIENTE"}
                       </span>
 
                       {/* Flecha — solo durante inspección */}
