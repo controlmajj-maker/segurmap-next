@@ -180,16 +180,19 @@ export default function SegurMapApp() {
       } else {
         setIsInspectionActive(false);
         setCurrentInspection(null);
-        // Show last completed inspection zones with their OK/ISSUE status
-        const lastCompleted = inspList.find((i: any) => !i.is_active);
-        if (lastCompleted?.zones_data && Array.isArray(lastCompleted.zones_data) && lastCompleted.zones_data.length > 0) {
-          console.log("[loadData] restoring last inspection zones with status");
-          setZones(lastCompleted.zones_data);
-        } else if (configZones) {
-          console.log("[loadData] restoring", configZones.length, "config zones");
+        // zones_config ALWAYS wins — it is the admin source of truth for zone layout.
+        // lastCompleted.zones_data is only used if no zones_config exists yet.
+        if (configZones) {
+          console.log("[loadData] restoring", configZones.length, "config zones (zones_config priority)");
           setZones(configZones);
+        } else {
+          const lastCompleted = inspList.find((i: any) => !i.is_active);
+          if (lastCompleted?.zones_data && Array.isArray(lastCompleted.zones_data) && lastCompleted.zones_data.length > 0) {
+            console.log("[loadData] no zones_config, falling back to last inspection zones_data");
+            setZones(lastCompleted.zones_data);
+          }
+          // If neither, leave INITIAL_ZONES as-is
         }
-        // If neither, leave INITIAL_ZONES as-is
       }
     } catch (e) { console.error("[loadData] error:", e); }
     setIsLoading(false);
