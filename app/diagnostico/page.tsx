@@ -25,7 +25,7 @@ export default function DiagnosticoPage() {
     }},
     { label: "2. PUT /api/config", color: "#dc2626", fn: async () => {
       const res = await fetch("/api/config", {
-        method: "PUT",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ zones_config: JSON.stringify(TEST_ZONES) }),
       });
