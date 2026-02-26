@@ -374,14 +374,18 @@ export default function SegurMapApp() {
     const okZones = zones.filter(z => z.status === "OK");
     const findingsForSummary = allFindings.filter(f => f.inspection_id === currentInspection.id);
 
-    let summary = `Inspección completada el ${new Date().toLocaleDateString()}. ${okZones.length} zonas sin hallazgos. ${issueZones.length} zonas con hallazgos que requieren atención.`;
+    const pendingZonesCount = zones.filter(z => z.status === "PENDING").length;
+    let summary = `Inspección completada el ${new Date().toLocaleDateString()}. ${okZones.length} zona${okZones.length !== 1 ? "s" : ""} sin hallazgos, ${issueZones.length} con hallazgos que requieren atención${pendingZonesCount > 0 ? `, ${pendingZonesCount} sin evaluar` : ""}.`;
 
     if (findingsForSummary.length > 0) {
       try {
         const findingsList = findingsForSummary
           .map(f => `- [${f.zone_name || "Sin zona"}] ${f.item_label}: ${f.description}`)
           .join("\n");
-        const prompt = `Eres un experto en seguridad industrial. Genera un resumen ejecutivo breve (3-4 oraciones en español) de esta inspección de seguridad:\n${findingsList}\nIncluye las áreas de mayor riesgo y recomendaciones generales.`;
+        const zonesContext = pendingZonesCount > 0
+          ? `\nZonas evaluadas: ${okZones.length + issueZones.length} de ${zones.length} (${pendingZonesCount} sin evaluar).`
+          : `\nTodas las zonas fueron evaluadas (${zones.length} en total).`;
+        const prompt = `Eres un experto en seguridad industrial. Genera un resumen ejecutivo breve (3-4 oraciones en español) de esta inspección de seguridad:\n${findingsList}${zonesContext}\nIncluye las áreas de mayor riesgo y recomendaciones generales.`;
         const aiRes = await fetch("/api/ai", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -567,7 +571,7 @@ export default function SegurMapApp() {
                   </h2>
                   <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">
                     {isInspectionActive
-                      ? `${pendingZones} áreas pendientes`
+                      ? `${zones.filter(z => z.status !== "PENDING").length} de ${zones.length} zona${zones.length !== 1 ? "s" : ""} evaluada${zones.filter(z => z.status !== "PENDING").length !== 1 ? "s" : ""}`
                       : lastInspection
                         ? `${new Date(lastInspection.created_at).toLocaleDateString()} · ${lastInspection.inspector}`
                         : "Sin inspecciones previas"}
@@ -655,24 +659,37 @@ export default function SegurMapApp() {
               </div>
             </div>
 
-            {pendingZones === 0 && isInspectionActive && (
-              <div className="bg-slate-900 p-6 md:p-10 rounded-3xl text-white flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl border-b-4 border-blue-600">
-                <div>
-                  <h3 className="text-2xl md:text-3xl font-black text-blue-400 mb-1">Recorrido Finalizado</h3>
-                  <p className="text-slate-400 text-sm">Todas las zonas auditadas. Sella el informe.</p>
+            {(() => {
+              const evaluatedZones = zones.filter(z => z.status !== "PENDING").length;
+              const totalZones = zones.length;
+              const allDone = pendingZones === 0;
+              if (!isInspectionActive || evaluatedZones === 0) return null;
+              return (
+                <div className={`p-6 md:p-8 rounded-3xl text-white flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl border-b-4 ${allDone ? "bg-slate-900 border-blue-600" : "bg-slate-800 border-orange-500"}`}>
+                  <div>
+                    <h3 className={`text-xl md:text-2xl font-black mb-1 ${allDone ? "text-blue-400" : "text-orange-400"}`}>
+                      {allDone ? "Recorrido Completo" : "Listo para sellar"}
+                    </h3>
+                    <p className="text-slate-400 text-sm">
+                      {allDone
+                        ? "Todas las zonas evaluadas. Sella el informe."
+                        : `${evaluatedZones} de ${totalZones} zona${totalZones !== 1 ? "s" : ""} evaluada${evaluatedZones !== 1 ? "s" : ""}. Puedes sellar ahora o continuar el recorrido.`
+                      }
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleFinishInspection}
+                    disabled={isFinishing}
+                    className="w-full sm:w-auto bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-lg hover:bg-blue-700 transition-all shadow-xl flex items-center justify-center gap-3"
+                  >
+                    {isFinishing
+                      ? <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> GENERANDO CON IA...</>
+                      : <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> SELLAR INFORME</>
+                    }
+                  </button>
                 </div>
-                <button
-                  onClick={handleFinishInspection}
-                  disabled={isFinishing}
-                  className="w-full sm:w-auto bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-lg hover:bg-blue-700 transition-all shadow-xl flex items-center justify-center gap-3"
-                >
-                  {isFinishing
-                    ? <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> GENERANDO CON IA...</>
-                    : <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> SELLAR INFORME</>
-                  }
-                </button>
-              </div>
-            )}
+              );
+            })()}
 
             {/* ── STATS + ÚLTIMA INSPECCIÓN EN PANTALLA PRINCIPAL ── */}
             {!isInspectionActive && (() => {
@@ -1073,40 +1090,38 @@ function NewInspectionModal({ onConfirm, onClose }: {
   onConfirm: (title: string, location: string, inspector: string) => void;
   onClose: () => void;
 }) {
-  const [title, setTitle] = useState("");
-  const [location, setLocation] = useState("Planta Principal");
-  const [inspector, setInspector] = useState("Administrador de Seguridad");
+  // Title auto-generated from current date — no form fields needed
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("es-MX", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+  });
+  // Capitalize first letter
+  const formattedDate = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+  const autoTitle = `Recorrido ${formattedDate}`;
 
   return (
     <div className="fixed inset-0 bg-slate-900/80 backdrop-blur flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md border-4 border-slate-100 overflow-hidden">
-        <div className="p-6 bg-blue-50 border-b">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-slate-100 overflow-hidden">
+        <div className="p-6 bg-blue-50 border-b text-center">
+          <div className="w-12 h-12 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+            <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+          </div>
           <h3 className="text-xl font-black text-slate-800">Nueva Inspección</h3>
-          <p className="text-slate-500 text-sm">Completa los datos para iniciar</p>
+          <p className="text-slate-500 text-sm mt-1">Se iniciará el recorrido con la fecha actual</p>
         </div>
-        <div className="p-6 space-y-4">
-          {[
-            { label: "Título del Reporte", value: title, setter: setTitle, placeholder: "Ej: Recorrido Semanal Feb 2025" },
-            { label: "Ubicación", value: location, setter: setLocation, placeholder: "Planta Principal" },
-            { label: "Inspector", value: inspector, setter: setInspector, placeholder: "Nombre del inspector" },
-          ].map(({ label, value, setter, placeholder }) => (
-            <div key={label}>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</label>
-              <input
-                value={value}
-                onChange={e => setter(e.target.value)}
-                placeholder={placeholder}
-                className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl focus:border-blue-500 outline-none text-sm font-medium transition-all"
-              />
-            </div>
-          ))}
+        <div className="p-6">
+          <div className="bg-slate-50 border-2 border-slate-100 rounded-2xl p-4 text-center">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Título del reporte</p>
+            <p className="text-sm font-black text-slate-800 leading-snug">{autoTitle}</p>
+          </div>
         </div>
-        <div className="p-6 bg-slate-50 border-t flex gap-3">
-          <button onClick={onClose} className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500">CANCELAR</button>
+        <div className="px-6 pb-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50 transition-all">CANCELAR</button>
           <button
-            disabled={!title.trim()}
-            onClick={() => onConfirm(title, location, inspector)}
-            className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all ${!title.trim() ? "bg-slate-300" : "bg-blue-600 hover:bg-blue-700 shadow-lg"}`}
+            onClick={() => onConfirm(autoTitle, "Planta Principal", "Comisión de Seguridad")}
+            className="flex-1 py-3 rounded-xl font-black text-xs uppercase text-white bg-blue-600 hover:bg-blue-700 shadow-lg transition-all"
           >
             INICIAR
           </button>
