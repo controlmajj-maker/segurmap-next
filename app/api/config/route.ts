@@ -2,36 +2,50 @@ import { NextResponse } from "next/server";
 import pool from "../../../lib/db";
 
 /**
- * Config storage strategy:
- * - One special row in `inspections` with title = '__cfg__'
- * - All config (zones_config, bg_url, bg_zoom, bg_offset_x, bg_offset_y)
- *   is stored as a flat JSON object in the `summary` TEXT column.
- * - We NEVER use zones_data or ::jsonb here — TEXT only, no casting.
+ * Config storage strategy (v2):
+ * - Dedicated `app_config` table with key/value pairs (UPSERT)
+ * - Auto-creates the table on first use
+ * - Falls back to legacy sentinel row in `inspections` for migration
  */
-const SENTINEL = "__cfg__";
 
-async function readAll(): Promise<Record<string, string>> {
-  const r = await pool.query(
-    "SELECT summary FROM inspections WHERE title = $1 LIMIT 1",
-    [SENTINEL]
-  );
-  if (!r.rows[0]?.summary) return {};
-  try { return JSON.parse(r.rows[0].summary); }
-  catch { return {}; }
+async function ensureTable(): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
 }
 
-async function writeAll(data: Record<string, string>): Promise<void> {
-  const json = JSON.stringify(data);
-  const upd = await pool.query(
-    "UPDATE inspections SET summary = $1 WHERE title = $2 RETURNING id",
-    [json, SENTINEL]
-  );
-  if ((upd.rowCount ?? 0) === 0) {
-    await pool.query(
-      "INSERT INTO inspections (title, location, inspector, is_active, summary) VALUES ($1, $2, $3, $4, $5)",
-      [SENTINEL, "", "", false, json]
-    );
+async function readAll(): Promise<Record<string, string>> {
+  await ensureTable();
+  const r = await pool.query("SELECT key, value FROM app_config");
+  const result: Record<string, string> = {};
+  for (const row of r.rows) {
+    result[row.key] = row.value;
   }
+  // Migration: if empty, try legacy sentinel row
+  if (Object.keys(result).length === 0) {
+    try {
+      const legacy = await pool.query(
+        "SELECT summary FROM inspections WHERE title = '__cfg__' LIMIT 1"
+      );
+      if (legacy.rows[0]?.summary) {
+        const parsed = JSON.parse(legacy.rows[0].summary) as Record<string, string>;
+        // Migrate to new table
+        for (const [k, v] of Object.entries(parsed)) {
+          await pool.query(
+            `INSERT INTO app_config (key, value, updated_at) VALUES ($1, $2, NOW())
+             ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+            [k, String(v)]
+          );
+        }
+        return parsed;
+      }
+    } catch { /* no legacy data */ }
+  }
+  return result;
 }
 
 export async function GET() {
@@ -47,16 +61,19 @@ export async function GET() {
 
 export async function PUT(req: Request) {
   try {
+    await ensureTable();
     const incoming = await req.json() as Record<string, unknown>;
-    // Merge incoming values (as strings) over existing config
-    const existing = await readAll();
-    const merged: Record<string, string> = { ...existing };
+    // UPSERT each key individually — atomic, no lost updates
     for (const [k, v] of Object.entries(incoming)) {
-      merged[k] = String(v);
+      await pool.query(
+        `INSERT INTO app_config (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+        [k, String(v)]
+      );
     }
-    await writeAll(merged);
-    console.log("[cfg PUT] saved keys:", Object.keys(merged), "zones_config len:", merged.zones_config?.length ?? 0);
-    return NextResponse.json({ ok: true, keys: Object.keys(merged) });
+    const saved = await readAll();
+    console.log("[cfg PUT] saved keys:", Object.keys(saved), "zones_config len:", saved.zones_config?.length ?? 0);
+    return NextResponse.json({ ok: true, keys: Object.keys(saved) });
   } catch (e: any) {
     console.error("[cfg PUT] error:", e.message);
     return NextResponse.json({ error: e.message }, { status: 500 });
