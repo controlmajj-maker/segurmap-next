@@ -134,6 +134,7 @@ export default function SegurMapApp() {
   const [showNewInspectionModal, setShowNewInspectionModal] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const bgInputRef = useRef<HTMLInputElement>(null);
+  // bgOffsetX, bgOffsetY, bgZoom, backgroundImage se mantienen en estado para ConfigPage
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -567,15 +568,66 @@ export default function SegurMapApp() {
                 )}
               </div>
 
-              <ZoneMap
-                zones={zones}
-                onZoneClick={z => isInspectionActive && setSelectedZone(z)}
-                backgroundImage={backgroundImage}
-                bgOffsetX={bgOffsetX}
-                bgOffsetY={bgOffsetY}
-                bgZoom={bgZoom}
-                isDisabled={!isInspectionActive}
-              />
+              {/* ── Lista vertical de zonas ── */}
+              <div className="space-y-2">
+                {zones.map(zone => {
+                  const statusColor =
+                    zone.status === "OK"    ? "bg-green-500" :
+                    zone.status === "ISSUE" ? "bg-red-500 animate-pulse" :
+                    "bg-slate-300";
+                  const statusLabel =
+                    zone.status === "OK"    ? "OK" :
+                    zone.status === "ISSUE" ? "ISSUE" :
+                    "PENDIENTE";
+                  const labelColor =
+                    zone.status === "OK"    ? "bg-green-50 text-green-700 border-green-200" :
+                    zone.status === "ISSUE" ? "bg-red-50 text-red-700 border-red-200" :
+                    "bg-slate-50 text-slate-400 border-slate-200";
+                  const rowColor =
+                    zone.status === "OK"    ? "border-green-100 hover:border-green-300 hover:bg-green-50/30" :
+                    zone.status === "ISSUE" ? "border-red-100 hover:border-red-300 hover:bg-red-50/30" :
+                    "border-slate-100 hover:border-blue-200 hover:bg-blue-50/20";
+                  const isClickable = isInspectionActive;
+                  return (
+                    <button
+                      key={zone.id}
+                      disabled={!isClickable}
+                      onClick={() => isClickable && setSelectedZone(zone)}
+                      className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl border-2 transition-all text-left
+                        ${rowColor}
+                        ${isClickable ? "cursor-pointer active:scale-[0.99]" : "cursor-not-allowed opacity-60"}
+                        bg-white shadow-sm`}
+                    >
+                      {/* Indicador circular de estado */}
+                      <span className={`shrink-0 w-3.5 h-3.5 rounded-full ${statusColor}`} />
+
+                      {/* Nombre de la zona */}
+                      <span className="flex-1 font-black text-slate-800 text-sm md:text-base tracking-tight">
+                        {zone.name}
+                      </span>
+
+                      {/* Hallazgos registrados en esta zona */}
+                      {zone.status === "ISSUE" && Object.keys(zone.findings || {}).length > 0 && (
+                        <span className="text-[9px] font-black text-red-500 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
+                          {Object.keys(zone.findings).length} hallazgo{Object.keys(zone.findings).length !== 1 ? "s" : ""}
+                        </span>
+                      )}
+
+                      {/* Etiqueta de estado */}
+                      <span className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full border ${labelColor}`}>
+                        {statusLabel}
+                      </span>
+
+                      {/* Flecha indicadora solo si está activo */}
+                      {isClickable && (
+                        <svg className="w-4 h-4 text-slate-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {pendingZones === 0 && isInspectionActive && (
@@ -1003,65 +1055,8 @@ export default function SegurMapApp() {
   );
 }
 
-// ─── Zone Map ─────────────────────────────────────────────────────────────────
-function ZoneMap({ zones, onZoneClick, backgroundImage, bgOffsetX = 50, bgOffsetY = 50, bgZoom = 100, isDisabled }: {
-  zones: Zone[];
-  onZoneClick: (z: Zone) => void;
-  backgroundImage?: string;
-  bgOffsetX?: number;
-  bgOffsetY?: number;
-  bgZoom?: number;
-  isDisabled: boolean;
-}) {
-  const getStyle = (status: ZoneStatus) => {
-    if (status === "ISSUE") return "bg-red-500/50 border-red-600 text-red-900 border-2 animate-pulse";
-    if (status === "OK") return "bg-green-500/40 border-green-600 text-green-900 border-2";
-    return "bg-slate-200/70 border-slate-400 text-slate-700 hover:bg-blue-200/50 hover:border-blue-400";
-  };
-
-  return (
-    <div
-      className={`relative w-full aspect-video rounded-2xl border-4 border-slate-200 overflow-hidden shadow-inner ${isDisabled ? "opacity-75" : ""}`}
-      style={backgroundImage ? {
-        backgroundColor: "#f1f5f9",
-        backgroundImage: `url(${backgroundImage})`,
-        backgroundSize: `${bgZoom}%`,
-        backgroundPosition: `${bgOffsetX}% ${bgOffsetY}%`,
-        backgroundRepeat: "no-repeat",
-        filter: isDisabled ? "grayscale(0.5) opacity(0.7)" : undefined,
-      } : { backgroundColor: "#f1f5f9" }}
-    >
-      {!backgroundImage && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center opacity-10">
-          <svg className="w-16 h-16 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-          </svg>
-          <p className="text-xs font-black uppercase tracking-widest">Sin plano de planta</p>
-        </div>
-      )}
-
-      {zones.map(zone => (
-        <button
-          key={zone.id}
-          disabled={isDisabled}
-          onClick={() => onZoneClick(zone)}
-          className={`absolute border rounded-xl flex flex-col items-center justify-center text-center transition-all p-1 ${getStyle(zone.status)} ${isDisabled ? "cursor-not-allowed" : "cursor-pointer"}`}
-          style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.width}%`, height: `${zone.height}%` }}
-        >
-          <span className="text-[7px] md:text-[10px] font-black uppercase leading-tight">{zone.name}</span>
-          {zone.status === "OK" && <span className="text-[8px] md:text-xs">✓</span>}
-          {zone.status === "ISSUE" && <span className="text-[8px] md:text-xs">⚠</span>}
-        </button>
-      ))}
-
-      <div className="hidden md:flex absolute bottom-3 right-3 bg-black/60 backdrop-blur px-3 py-1.5 rounded-xl text-[8px] text-white font-black gap-4 border border-white/20">
-        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-slate-400 inline-block"></span>PENDIENTE</span>
-        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>OK</span>
-        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse inline-block"></span>HALLAZGO</span>
-      </div>
-    </div>
-  );
-}
+// ZoneMap eliminado — reemplazado por lista vertical en la vista principal.
+// Las zonas en ConfigPage usan su propio canvas inline.
 
 // ─── New Inspection Modal ─────────────────────────────────────────────────────
 function NewInspectionModal({ onConfirm, onClose }: {
