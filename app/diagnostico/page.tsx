@@ -13,104 +13,74 @@ export default function DiagnosticoPage() {
 
   const run = async (label: string, fn: () => Promise<any>) => {
     setLoading(true);
-    try {
-      const data = await fn();
-      setResult({ step: label, ...data });
-    } catch (e: any) {
-      setResult({ step: label, error: e.message });
-    }
+    try { setResult({ step: label, ...(await fn()) }); }
+    catch (e: any) { setResult({ step: label, caught_error: e.message }); }
     setLoading(false);
   };
 
   const steps = [
-    {
-      label: "1. Estado de DB",
-      color: "#1e293b",
-      fn: async () => {
-        const res = await fetch("/api/debug-db");
-        return res.json();
-      }
-    },
-    {
-      label: "2. Escribir via /api/config (PUT)",
-      color: "#2563eb",
-      fn: async () => {
-        const res = await fetch("/api/config", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ zones_config: JSON.stringify(TEST_ZONES) }),
-        });
-        const text = await res.text();
-        try { return { http_status: res.status, response: JSON.parse(text) }; }
-        catch { return { http_status: res.status, raw_response: text.substring(0, 500), parse_error: "Not valid JSON" }; }
-      }
-    },
-    {
-      label: "3. Leer /api/config (GET)",
-      color: "#16a34a",
-      fn: async () => {
-        const res = await fetch("/api/config");
-        const text = await res.text();
-        try { return { http_status: res.status, response: JSON.parse(text) }; }
-        catch { return { http_status: res.status, raw_response: text.substring(0, 500), parse_error: "Not valid JSON" }; }
-      }
-    },
-    {
-      label: "4. Escribir directo a DB (POST debug)",
-      color: "#9333ea",
-      fn: async () => {
-        const res = await fetch("/api/debug-db", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ zones: TEST_ZONES }),
-        });
-        return res.json();
-      }
-    },
-    {
-      label: "5. Simular lógica config PUT (PATCH debug)",
-      color: "#d97706",
-      fn: async () => {
-        const res = await fetch("/api/debug-db", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ zones_config: JSON.stringify(TEST_ZONES) }),
-        });
-        return res.json();
-      }
-    },
-    {
-      label: "6. Verificar DB después de escribir",
-      color: "#0891b2",
-      fn: async () => {
-        const res = await fetch("/api/debug-db");
-        return res.json();
-      }
-    },
+    { label: "1. Estado DB", color: "#1e293b", fn: async () => {
+      const res = await fetch("/api/debug-db");
+      return res.json();
+    }},
+    { label: "2. PUT /api/config", color: "#dc2626", fn: async () => {
+      const res = await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zones_config: JSON.stringify(TEST_ZONES) }),
+      });
+      const text = await res.text();
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch {}
+      return { http_status: res.status, raw_text: text.substring(0, 300), parsed_json: parsed };
+    }},
+    { label: "3. GET /api/config", color: "#16a34a", fn: async () => {
+      const res = await fetch("/api/config");
+      const text = await res.text();
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch {}
+      return { http_status: res.status, raw_text: text.substring(0, 300), parsed_json: parsed };
+    }},
+    { label: "4. POST debug (directo DB)", color: "#9333ea", fn: async () => {
+      const res = await fetch("/api/debug-db", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zones: TEST_ZONES }),
+      });
+      return res.json();
+    }},
+    { label: "5. PATCH debug (simula config PUT)", color: "#d97706", fn: async () => {
+      const res = await fetch("/api/debug-db", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zones_config: JSON.stringify(TEST_ZONES) }),
+      });
+      return res.json();
+    }},
+    { label: "6. Verificar DB", color: "#0891b2", fn: async () => {
+      const res = await fetch("/api/debug-db");
+      return res.json();
+    }},
   ];
 
   return (
     <div style={{ padding: 24, fontFamily: "monospace", maxWidth: 900 }}>
-      <h1 style={{ fontSize: 20, marginBottom: 8 }}>🔍 Diagnóstico Completo — Zonas Config</h1>
+      <h1 style={{ fontSize: 20, marginBottom: 8 }}>🔍 Diagnóstico</h1>
       <p style={{ fontSize: 11, color: "#64748b", marginBottom: 20 }}>
-        Orden sugerido: 1 → 5 → 6 → 3. Si paso 5 funciona pero paso 2 falla, el problema es el deploy del config route.
+        Corre: <b>2 → 3</b>. Si paso 2 tiene <code>raw_text</code> vacío o raro, el config_route no está actualizado en Vercel.
       </p>
-      
       <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
-        {steps.map(step => (
-          <button key={step.label} onClick={() => run(step.label, step.fn)} disabled={loading}
-            style={{ padding: "8px 14px", background: loading ? "#94a3b8" : step.color, color: "white", 
-                     border: "none", borderRadius: 8, cursor: loading ? "not-allowed" : "pointer", fontSize: 12 }}>
-            {loading ? "..." : step.label}
+        {steps.map(s => (
+          <button key={s.label} onClick={() => run(s.label, s.fn)} disabled={loading}
+            style={{ padding: "8px 14px", background: loading ? "#94a3b8" : s.color,
+                     color: "white", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>
+            {s.label}
           </button>
         ))}
       </div>
-
       {result && (
-        <pre style={{
-          background: "#0f172a", color: "#94a3b8", padding: 16, borderRadius: 8,
-          overflow: "auto", fontSize: 11, maxHeight: 600, whiteSpace: "pre-wrap", wordBreak: "break-all"
-        }}>
+        <pre style={{ background: "#0f172a", color: "#94a3b8", padding: 16, borderRadius: 8,
+          overflow: "auto", fontSize: 11, maxHeight: 600, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
           {JSON.stringify(result, null, 2)}
         </pre>
       )}
