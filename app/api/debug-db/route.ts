@@ -12,7 +12,6 @@ export async function GET() {
   } catch (e: any) { results.tables_error = e.message; }
 
   try {
-    // Check columns of app_config
     const cols = await pool.query(
       `SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'app_config'`
     );
@@ -25,7 +24,6 @@ export async function GET() {
   } catch (e: any) { results.app_config_error = e.message; }
 
   try {
-    // Test write WITHOUT updated_at
     await pool.query(
       `INSERT INTO app_config (key, value) VALUES ('__test__', 'ok')
        ON CONFLICT (key) DO UPDATE SET value = 'ok'`
@@ -41,22 +39,53 @@ export async function GET() {
       results.zones_count = Array.isArray(parsed) ? parsed.length : "not array";
       results.zones_names = Array.isArray(parsed) ? parsed.map((z: any) => z.name) : [];
     } else {
-      results.zones_config_raw = null;
+      results.zones_config_exists = false;
     }
   } catch (e: any) { results.zones_config_error = e.message; }
 
   return NextResponse.json(results);
 }
 
+// POST: write zones_config directly to DB (bypasses config route)
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+    const value = body.zones_config ?? JSON.stringify(body.zones);
     await pool.query(
       `INSERT INTO app_config (key, value) VALUES ('zones_config', $1)
        ON CONFLICT (key) DO UPDATE SET value = $1`,
-      [JSON.stringify(body.zones)]
+      [value]
     );
-    return NextResponse.json({ ok: true, saved: body.zones?.length });
+    // Verify it saved
+    const verify = await pool.query("SELECT value FROM app_config WHERE key = 'zones_config'");
+    const parsed = JSON.parse(verify.rows[0].value);
+    return NextResponse.json({ 
+      ok: true, 
+      saved_count: Array.isArray(parsed) ? parsed.length : 0,
+      zone_names: Array.isArray(parsed) ? parsed.map((z: any) => z.name) : []
+    });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
+}
+
+// PATCH: test the exact same logic as config PUT route
+export async function PATCH(req: Request) {
+  try {
+    const incoming = await req.json() as Record<string, unknown>;
+    const keys_written: string[] = [];
+    for (const [k, v] of Object.entries(incoming)) {
+      await pool.query(
+        `INSERT INTO app_config (key, value) VALUES ($1, $2)
+         ON CONFLICT (key) DO UPDATE SET value = $2`,
+        [k, String(v)]
+      );
+      keys_written.push(k);
+    }
+    const r = await pool.query("SELECT key, value FROM app_config");
+    const saved: Record<string, string> = {};
+    for (const row of r.rows) { saved[row.key] = row.value; }
+    return NextResponse.json({ ok: true, keys_written, all_keys: Object.keys(saved) });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
