@@ -4,7 +4,7 @@ import pool from "../../../lib/db";
 export async function GET() {
   try {
     const result = await pool.query(
-      "SELECT * FROM inspections ORDER BY created_at DESC"
+      "SELECT * FROM inspections WHERE title != '__app_config__' ORDER BY created_at DESC"
     );
     return NextResponse.json(result.rows);
   } catch (error: any) {
