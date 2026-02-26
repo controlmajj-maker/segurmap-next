@@ -1338,7 +1338,7 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
     }
   }, []);
 
-  const hasAnyFail = Object.values(results).some(v => v === false);
+  const hasAnyFail = Object.values(results).some(v => v === false) || Object.keys(findings).some(k => k.startsWith("manual_"));
 
   const handleConfirm = async () => {
     setIsSaving(true);
@@ -1362,6 +1362,54 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 md:p-6">
+
+          {/* ── Instrucción general ── */}
+          <div className="mb-5 bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3">
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Si no existe ningún hallazgo en esta zona simplemente da clic en el botón{" "}
+              <span className="font-black text-slate-800">Validar Zona</span> para continuar.
+              En caso contrario, sube las evidencias y comentarios correspondientes.
+            </p>
+          </div>
+
+          {/* ── Agregar hallazgo ── */}
+          <div className="mb-5">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">
+              Hallazgo detectado
+            </p>
+            <button
+              onClick={() => setItemToReport({ id: `manual_${Date.now()}`, label: `Hallazgo en ${zone.name}` })}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl border-2 border-dashed border-slate-300 text-slate-600 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-700 transition-all font-black text-xs uppercase tracking-widest"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+              </svg>
+              Agregar hallazgo
+            </button>
+
+            {/* Hallazgos manuales registrados en esta sesión */}
+            {Object.entries(findings)
+              .filter(([key]) => key.startsWith("manual_"))
+              .map(([key, f]) => (
+                <div key={key} className="mt-2 flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  <span className="text-red-500 text-sm">⚠</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-black text-slate-800 truncate">{f.item_label}</p>
+                    <p className="text-[9px] text-slate-500 italic truncate">"{f.description}"</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const updated = { ...findings };
+                      delete updated[key];
+                      setFindings(updated);
+                    }}
+                    className="shrink-0 w-5 h-5 bg-red-100 text-red-500 rounded-md text-[10px] flex items-center justify-center hover:bg-red-200 font-black"
+                  >✕</button>
+                </div>
+              ))
+            }
+          </div>
+
           <div className="space-y-2">
             {SAFETY_CHECKLIST.map(group => (
               <div key={group.id} className="border border-slate-100 rounded-xl overflow-hidden">
@@ -1418,7 +1466,7 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
           >
             {isSaving
               ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> GUARDANDO...</>
-              : "CONFIRMAR ZONA"}
+              : "VALIDAR ZONA"}
           </button>
         </div>
       </div>
@@ -1430,14 +1478,21 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
           inspectionId={inspectionId}
           existing={findings[itemToReport.id]}
           onSave={async (finding) => {
-            setResults(prev => ({ ...prev, [itemToReport.id]: false }));
-            setFindings(prev => ({ ...prev, [itemToReport.id]: { ...finding, id: `local_${Date.now()}`, created_at: new Date().toISOString() } as Finding }));
+            const key = itemToReport.id;
+            // Solo marcar resultado como false si es un ítem del checklist NOM (no manual)
+            if (!key.startsWith("manual_")) {
+              setResults(prev => ({ ...prev, [key]: false }));
+            }
+            setFindings(prev => ({ ...prev, [key]: { ...finding, id: `local_${Date.now()}`, created_at: new Date().toISOString() } as Finding }));
             setItemToReport(null);
           }}
           onClear={() => {
-            setResults(prev => ({ ...prev, [itemToReport.id]: true }));
+            const key = itemToReport.id;
+            if (!key.startsWith("manual_")) {
+              setResults(prev => ({ ...prev, [key]: true }));
+            }
             const updated = { ...findings };
-            delete updated[itemToReport.id];
+            delete updated[key];
             setFindings(updated);
             setItemToReport(null);
           }}
