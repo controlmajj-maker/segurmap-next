@@ -299,7 +299,7 @@ export default function SegurMapApp() {
     setIsInspectionActive(false);
     setCurrentInspection(null);
     setShowCancelConfirm(false);
-    // Reload everything to restore config zones
+    // Reload everything — same merge logic as loadData
     const [insRes, finRes, cfgRes] = await Promise.all([
       fetch("/api/inspections"),
       fetch("/api/findings"),
@@ -311,14 +311,40 @@ export default function SegurMapApp() {
     const inspList = Array.isArray(insData) ? insData : [];
     setInspections(inspList);
     setAllFindings(Array.isArray(finData) ? finData : []);
-    // Restore zones from config
+
+    // Parse config zones (source of truth for layout)
+    let configZones: Zone[] | null = null;
     if (cfgData.zones_config) {
       try {
-        const saved: Zone[] = JSON.parse(cfgData.zones_config);
-        if (Array.isArray(saved) && saved.length > 0) { setZones(saved); return; }
+        const parsed: Zone[] = JSON.parse(cfgData.zones_config);
+        if (Array.isArray(parsed) && parsed.length > 0) configZones = parsed;
       } catch { /* fall through */ }
     }
-    setZones(INITIAL_ZONES);
+
+    // Merge: layout from zones_config + status from last completed inspection
+    const lastCompleted = inspList.find((i: any) => !i.is_active);
+    const baseZones = configZones ?? (
+      lastCompleted?.zones_data && Array.isArray(lastCompleted.zones_data) && lastCompleted.zones_data.length > 0
+        ? lastCompleted.zones_data
+        : null
+    );
+    if (baseZones) {
+      if (lastCompleted?.zones_data && Array.isArray(lastCompleted.zones_data) && lastCompleted.zones_data.length > 0) {
+        const statusMap: Record<string, ZoneStatus> = {};
+        for (const z of lastCompleted.zones_data as Zone[]) {
+          statusMap[z.id] = z.status;
+          statusMap[z.name] = z.status;
+        }
+        setZones(baseZones.map((z: Zone) => ({
+          ...z,
+          status: statusMap[z.id] ?? statusMap[z.name] ?? z.status,
+        })));
+      } else {
+        setZones(baseZones);
+      }
+    } else {
+      setZones(INITIAL_ZONES);
+    }
   }
 
   async function handleZoneSave(
@@ -564,13 +590,36 @@ export default function SegurMapApp() {
         {/* ── CURRENT VIEW ── */}
         {view === "current" && (
           <div className="space-y-6">
-            <div className="bg-white p-4 md:p-8 rounded-3xl shadow-xl border border-slate-100">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
+            <div className={`relative overflow-hidden rounded-3xl shadow-xl border transition-all duration-700 ${
+              isInspectionActive
+                ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 border-blue-500/30"
+                : "bg-white border-slate-100"
+            } p-4 md:p-8`}>
+
+              {/* Fondo animado solo durante inspección activa */}
+              {isInspectionActive && (
+                <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                  <div className="absolute -top-24 -right-24 w-72 h-72 bg-blue-600/10 rounded-full blur-3xl animate-pulse" />
+                  <div className="absolute -bottom-16 -left-16 w-56 h-56 bg-violet-600/10 rounded-full blur-3xl animate-pulse" style={{animationDelay:"1s"}} />
+                </div>
+              )}
+
+              <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
                 <div>
-                  <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">
+                  {/* Pill de estado */}
+                  <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest mb-2 ${
+                    isInspectionActive
+                      ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                      : "bg-slate-100 text-slate-500 border border-slate-200"
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${isInspectionActive ? "bg-blue-400 animate-pulse" : "bg-slate-400"}`} />
+                    {isInspectionActive ? "EN PROGRESO" : "ÚLTIMO RECORRIDO"}
+                  </div>
+
+                  <h2 className={`text-2xl md:text-3xl font-black tracking-tight ${isInspectionActive ? "text-white" : "text-slate-800"}`}>
                     {isInspectionActive ? "Inspección Activa" : "Estado actual de la planta"}
                   </h2>
-                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">
+                  <p className={`text-xs font-bold uppercase tracking-widest mt-1 ${isInspectionActive ? "text-slate-400" : "text-slate-400"}`}>
                     {isInspectionActive
                       ? `${zones.filter(z => z.status !== "PENDING").length} de ${zones.length} zona${zones.length !== 1 ? "s" : ""} evaluada${zones.filter(z => z.status !== "PENDING").length !== 1 ? "s" : ""}`
                       : lastInspection
@@ -581,17 +630,17 @@ export default function SegurMapApp() {
                 {!isInspectionActive ? (
                   <button
                     onClick={() => setShowNewInspectionModal(true)}
-                    className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-black text-sm shadow-lg hover:bg-blue-700 transition-all flex items-center gap-2"
+                    className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-black text-sm shadow-lg hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-2"
                   >
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
                     </svg>
                     NUEVA INSPECCIÓN
                   </button>
                 ) : (
                   <button
                     onClick={() => setShowCancelConfirm(true)}
-                    className="bg-red-50 text-red-600 border-2 border-red-200 px-5 py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-all"
+                    className="bg-red-500/10 text-red-400 border border-red-500/30 px-5 py-3 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-500/20 transition-all"
                   >
                     CANCELAR RECORRIDO
                   </button>
@@ -624,10 +673,13 @@ export default function SegurMapApp() {
                 const dashOffset = circumference * (1 - pct / 100);
                 const gaugeColor = pct === 100 ? "#16a34a" : pct >= 50 ? "#2563eb" : "#f97316";
 
+                const totalResueltos = allFindings.filter(f => f.is_closed === true || (f as any).is_closed === "true").length;
+                const totalAbiertos = totalHallazgos - totalResueltos;
+
                 return (
-                  <div className="grid grid-cols-3 gap-3 mb-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                     {/* Gauge evaluación */}
-                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 flex flex-col items-center justify-center">
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 flex flex-col items-center justify-center col-span-2 md:col-span-1">
                       <svg width="72" height="72" viewBox="0 0 72 72">
                         <circle cx={cx} cy={cy} r={r} fill="none" stroke="#f1f5f9" strokeWidth="7" />
                         <circle
@@ -658,11 +710,19 @@ export default function SegurMapApp() {
                       </p>
                     </div>
 
-                    {/* Total hallazgos */}
-                    <div className={`rounded-2xl border shadow-sm p-3 flex flex-col items-center justify-center text-center ${totalHallazgos > 0 ? "bg-red-50 border-red-100" : "bg-white border-slate-100"}`}>
-                      <p className={`text-3xl font-black leading-none ${totalHallazgos > 0 ? "text-red-600" : "text-slate-800"}`}>{totalHallazgos}</p>
+                    {/* Total hallazgos abiertos */}
+                    <div className={`rounded-2xl border shadow-sm p-3 flex flex-col items-center justify-center text-center ${totalAbiertos > 0 ? "bg-red-50 border-red-100" : "bg-white border-slate-100"}`}>
+                      <p className={`text-3xl font-black leading-none ${totalAbiertos > 0 ? "text-red-600" : "text-slate-800"}`}>{totalAbiertos}</p>
                       <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-2 leading-tight">
-                        Hallazgos<br/>totales
+                        Hallazgos<br/>abiertos
+                      </p>
+                    </div>
+
+                    {/* Total hallazgos resueltos */}
+                    <div className={`rounded-2xl border shadow-sm p-3 flex flex-col items-center justify-center text-center ${totalResueltos > 0 ? "bg-green-50 border-green-100" : "bg-white border-slate-100"}`}>
+                      <p className={`text-3xl font-black leading-none ${totalResueltos > 0 ? "text-green-600" : "text-slate-800"}`}>{totalResueltos}</p>
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-2 leading-tight">
+                        Hallazgos<br/>resueltos
                       </p>
                     </div>
                   </div>
@@ -671,57 +731,70 @@ export default function SegurMapApp() {
 
               {/* ── Lista vertical de zonas ── */}
               <div className="space-y-2">
-                {zones.map(zone => {
-                  const statusColor =
-                    zone.status === "OK"    ? "bg-green-500" :
-                    zone.status === "ISSUE" ? "bg-red-500 animate-pulse" :
-                    "bg-slate-300";
-                  const statusLabel =
-                    zone.status === "OK"    ? "OK" :
-                    zone.status === "ISSUE" ? "ISSUE" :
-                    "PENDIENTE";
-                  const labelColor =
-                    zone.status === "OK"    ? "bg-green-50 text-green-700 border-green-200" :
-                    zone.status === "ISSUE" ? "bg-red-50 text-red-700 border-red-200" :
-                    "bg-slate-50 text-slate-400 border-slate-200";
-                  const rowColor =
-                    zone.status === "OK"    ? "border-green-100 hover:border-green-300 hover:bg-green-50/30" :
-                    zone.status === "ISSUE" ? "border-red-100 hover:border-red-300 hover:bg-red-50/30" :
-                    "border-slate-100 hover:border-blue-200 hover:bg-blue-50/20";
+                {zones.map((zone, idx) => {
+                  const isOK    = zone.status === "OK";
+                  const isISSUE = zone.status === "ISSUE";
+                  const isPENDING = zone.status === "PENDING";
                   const isClickable = isInspectionActive;
+
+                  // Colores y estilos por estado
+                  const dotClass    = isOK ? "bg-green-400" : isISSUE ? "bg-red-500" : isInspectionActive ? "bg-slate-400" : "bg-slate-300";
+                  const dotAnim     = isISSUE ? "animate-pulse" : "";
+                  const badgeClass  = isOK    ? "bg-green-500/10 text-green-600 border-green-200" :
+                                      isISSUE ? "bg-red-500/10 text-red-600 border-red-200" :
+                                                "bg-slate-100 text-slate-400 border-slate-200";
+                  const rowClass    = isInspectionActive
+                    ? isOK    ? "bg-green-50/40 border-green-200 hover:border-green-400 hover:bg-green-50/70"
+                    : isISSUE ? "bg-red-50/40 border-red-200 hover:border-red-400 hover:bg-red-50/70"
+                    :           "bg-white/5 border-white/10 hover:border-blue-400/50 hover:bg-white/10"
+                    : isOK    ? "bg-green-50/40 border-green-100"
+                    : isISSUE ? "bg-red-50/40 border-red-100"
+                    :           "bg-white border-slate-100";
+                  const nameClass   = isInspectionActive ? "text-white" : "text-slate-800";
+                  const arrowClass  = isInspectionActive ? "text-white/30" : "text-slate-200";
+
                   return (
                     <button
                       key={zone.id}
                       disabled={!isClickable}
                       onClick={() => isClickable && setSelectedZone(zone)}
-                      className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl border-2 transition-all text-left
-                        ${rowColor}
-                        ${isClickable ? "cursor-pointer active:scale-[0.99]" : "cursor-not-allowed opacity-60"}
-                        bg-white shadow-sm`}
+                      style={{ animationDelay: `${idx * 60}ms` }}
+                      className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl border transition-all duration-200 text-left
+                        ${rowClass}
+                        ${isClickable ? "cursor-pointer active:scale-[0.98] hover:shadow-md" : "cursor-default"}
+                        shadow-sm`}
                     >
                       {/* Indicador circular de estado */}
-                      <span className={`shrink-0 w-3.5 h-3.5 rounded-full ${statusColor}`} />
+                      <span className="relative shrink-0 flex items-center justify-center w-8 h-8">
+                        <span className={`w-3 h-3 rounded-full ${dotClass} ${dotAnim}`} />
+                        {isISSUE && (
+                          <span className="absolute inset-0 rounded-full bg-red-500/20 animate-ping" style={{animationDuration:"2s"}} />
+                        )}
+                        {isOK && isInspectionActive && (
+                          <span className="absolute inset-0 rounded-full bg-green-400/10" />
+                        )}
+                      </span>
 
                       {/* Nombre de la zona */}
-                      <span className="flex-1 font-black text-slate-800 text-sm md:text-base tracking-tight">
+                      <span className={`flex-1 font-black text-sm md:text-base tracking-tight ${nameClass}`}>
                         {zone.name}
                       </span>
 
                       {/* Hallazgos registrados en esta zona */}
-                      {zone.status === "ISSUE" && Object.keys(zone.findings || {}).length > 0 && (
-                        <span className="text-[9px] font-black text-red-500 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
-                          {Object.keys(zone.findings).length} hallazgo{Object.keys(zone.findings).length !== 1 ? "s" : ""}
+                      {isISSUE && Object.keys(zone.findings || {}).length > 0 && (
+                        <span className="text-[9px] font-black text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">
+                          ⚠ {Object.keys(zone.findings).length}
                         </span>
                       )}
 
                       {/* Etiqueta de estado */}
-                      <span className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full border ${labelColor}`}>
-                        {statusLabel}
+                      <span className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full border ${badgeClass}`}>
+                        {isOK ? "✓ OK" : isISSUE ? "ISSUE" : "—"}
                       </span>
 
-                      {/* Flecha indicadora solo si está activo */}
+                      {/* Flecha — solo durante inspección */}
                       {isClickable && (
-                        <svg className="w-4 h-4 text-slate-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className={`w-4 h-4 shrink-0 transition-transform group-hover:translate-x-0.5 ${arrowClass}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
                       )}
