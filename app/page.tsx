@@ -206,16 +206,33 @@ export default function SegurMapApp() {
   }, []);
 
   // ─── Stable zones change handler ────────────────────────────────────────
+  // Always saves zones with PENDING status so config state is clean
   const handleZonesChange = useCallback(async (newZones: Zone[]) => {
     setZones(newZones);
+    // Strip inspection-time state before saving to config
+    const cleanZones = newZones.map(z => ({
+      id: z.id,
+      name: z.name,
+      status: "PENDING" as ZoneStatus,
+      x: z.x,
+      y: z.y,
+      width: z.width,
+      height: z.height,
+      findings: {},
+    }));
     try {
       const res = await fetch("/api/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ zones_config: JSON.stringify(newZones) }),
+        body: JSON.stringify({ zones_config: JSON.stringify(cleanZones) }),
       });
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error("[handleZonesChange] HTTP error:", res.status, errText);
+        return;
+      }
       const d = await res.json();
-      console.log("[handleZonesChange] saved", newZones.length, "zones →", d);
+      console.log("[handleZonesChange] saved", cleanZones.length, "zones →", d);
     } catch (e) { console.error("[handleZonesChange] error:", e); }
   }, []);
 
