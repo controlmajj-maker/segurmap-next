@@ -151,58 +151,52 @@ export default function SegurMapApp() {
       setInspections(inspList);
       setAllFindings(finList);
 
-      // Restore app config (bg image, zoom, offsets)
-      if (cfgData.bg_url) setBackgroundImage(cfgData.bg_url);
-      if (cfgData.bg_zoom) setBgZoom(Number(cfgData.bg_zoom));
-      if (cfgData.bg_offset_x) setBgOffsetX(Number(cfgData.bg_offset_x));
-      if (cfgData.bg_offset_y) setBgOffsetY(Number(cfgData.bg_offset_y));
+      console.log("[loadData] cfgData keys:", Object.keys(cfgData), "zones_config len:", cfgData.zones_config?.length ?? 0);
 
-      // Check active inspection first — it owns zone state while active
+      // Restore background image and position from config
+      if (cfgData.bg_url)       setBackgroundImage(cfgData.bg_url);
+      if (cfgData.bg_zoom)      setBgZoom(Number(cfgData.bg_zoom));
+      if (cfgData.bg_offset_x)  setBgOffsetX(Number(cfgData.bg_offset_x));
+      if (cfgData.bg_offset_y)  setBgOffsetY(Number(cfgData.bg_offset_y));
+
+      // Active inspection owns zones while running
       const activeInsp = inspList.find((i: any) => i.is_active === true);
       if (activeInsp) {
         setCurrentInspection(activeInsp);
         setIsInspectionActive(true);
-        if (activeInsp.zones_data) {
-          setZones(activeInsp.zones_data);
-        } else {
-          setZones(INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
-        }
+        setZones(activeInsp.zones_data ?? INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
       } else {
         setIsInspectionActive(false);
         setCurrentInspection(null);
-        // Zones config (layout/positions) takes priority over last inspection's colored zones
+        // Saved config zones take priority
         if (cfgData.zones_config) {
           try {
-            console.log("[loadData] zones_config found, length:", cfgData.zones_config.length);
-            const savedZones: Zone[] = JSON.parse(cfgData.zones_config);
-            if (Array.isArray(savedZones) && savedZones.length > 0) {
-              console.log("[loadData] restoring", savedZones.length, "zones from config");
-              setZones(savedZones);
+            const saved: Zone[] = JSON.parse(cfgData.zones_config);
+            if (Array.isArray(saved) && saved.length > 0) {
+              console.log("[loadData] restoring", saved.length, "saved zones");
+              setZones(saved);
             }
-          } catch (e) { console.error("[loadData] zones_config parse error:", e); }
-        } else {
-          console.log("[loadData] no zones_config in DB, using fallback");
-          // Fall back to last inspection's zone colors only if no saved config
-          const completedInsp = inspList.find((i: any) => !i.is_active && i.zones_data);
-          if (completedInsp) setZones(completedInsp.zones_data);
+          } catch (e) { console.error("[loadData] parse error:", e); }
         }
+        // If no config zones, leave INITIAL_ZONES as-is (default state)
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("[loadData] error:", e); }
     setIsLoading(false);
   }, []);
 
   useEffect(() => { loadData(); }, []); // eslint-disable-line
 
-  // ─── Persist app config to DB — immediate direct fetch ──────────────────
-  const saveConfig = useCallback((patch: Record<string, string | number>) => {
-    fetch("/api/config", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    })
-      .then(r => r.json())
-      .then(d => console.log("[saveConfig] saved:", Object.keys(patch), d))
-      .catch(e => console.error("[saveConfig] error:", e));
+  // ─── Persist config to DB ────────────────────────────────────────────────
+  const saveConfig = useCallback(async (patch: Record<string, string | number>) => {
+    try {
+      const res = await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const d = await res.json();
+      console.log("[saveConfig] →", d);
+    } catch (e) { console.error("[saveConfig] error:", e); }
   }, []);
 
   async function handleStartInspection(title: string, location: string, inspector: string) {
@@ -824,12 +818,12 @@ export default function SegurMapApp() {
               const res = await fetch("/api/upload", { method: "POST", body: formData });
               const data = await res.json();
               setBackgroundImage(data.url);
-              saveConfig({ bg_url: data.url });
+              await saveConfig({ bg_url: data.url });
             }}
-            onBgOffsetX={setBgOffsetX}
-            onBgOffsetY={setBgOffsetY}
-            onBgZoom={setBgZoom}
-            onBgRemove={() => {
+            onBgOffsetX={async (v) => { setBgOffsetX(v); await saveConfig({ bg_offset_x: v }); }}
+            onBgOffsetY={async (v) => { setBgOffsetY(v); await saveConfig({ bg_offset_y: v }); }}
+            onBgZoom={async (v) => { setBgZoom(v); await saveConfig({ bg_zoom: v }); }}
+            onBgRemove={async () => {
               if (backgroundImage) {
                 fetch("/api/upload", {
                   method: "POST",
@@ -837,9 +831,12 @@ export default function SegurMapApp() {
                 }).catch(() => {});
               }
               setBackgroundImage(undefined);
-              saveConfig({ bg_url: "" });
+              await saveConfig({ bg_url: "" });
             }}
-            onZonesChange={setZones}
+            onZonesChange={async (newZones) => {
+              setZones(newZones);
+              await saveConfig({ zones_config: JSON.stringify(newZones) });
+            }}
             onDeleteAll={handleDeleteAll}
           />
         )}
@@ -1434,13 +1431,13 @@ function ConfigPage({
   bgOffsetY: number;
   bgZoom: number;
   bgInputRef: React.RefObject<HTMLInputElement>;
-  saveConfig: (patch: Record<string, string | number>) => void;
+  saveConfig: (patch: Record<string, string | number>) => Promise<void> | void;
   onBgChange: (f: File) => Promise<void>;
-  onBgOffsetX: (v: number) => void;
-  onBgOffsetY: (v: number) => void;
-  onBgZoom: (v: number) => void;
-  onBgRemove: () => void;
-  onZonesChange: (zones: Zone[]) => void;
+  onBgOffsetX: (v: number) => Promise<void> | void;
+  onBgOffsetY: (v: number) => Promise<void> | void;
+  onBgZoom: (v: number) => Promise<void> | void;
+  onBgRemove: () => Promise<void> | void;
+  onZonesChange: (zones: Zone[]) => Promise<void> | void;
   onDeleteAll: () => Promise<void>;
 }) {
   const [isUploadingBg, setIsUploadingBg] = useState(false);
@@ -1454,32 +1451,21 @@ function ConfigPage({
   const [histDeleteWord, setHistDeleteWord] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Local copy of zones for immediate UI — synced from parent on load only (not on every render)
+  // Mirror parent zones into local state (only on first load or external change)
   const [localZones, setLocalZones] = useState<Zone[]>(zones);
-  const zonesLoadedRef = useRef(false);
+  const prevZonesRef = useRef(zones);
   useEffect(() => {
-    // Only sync from parent when zones actually change from outside (e.g. initial load)
-    if (!zonesLoadedRef.current || zones.length !== localZones.length) {
+    if (zones !== prevZonesRef.current) {
+      prevZonesRef.current = zones;
       setLocalZones(zones);
-      zonesLoadedRef.current = true;
     }
-  }, [zones]); // eslint-disable-line
+  }, [zones]);
 
-  // Save zones: update local state + parent state + persist to DB directly
-  const saveZones = useCallback((updated: Zone[]) => {
+  // Save zones: update local state + call parent (which persists to DB)
+  const saveZones = useCallback(async (updated: Zone[]) => {
     console.log("[saveZones] saving", updated.length, "zones");
     setLocalZones(updated);
-    onZonesChange(updated);
-    // Direct fetch — no debounce, no intermediary
-    const body = JSON.stringify({ zones_config: JSON.stringify(updated) });
-    fetch("/api/config", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body,
-    })
-      .then(r => r.json())
-      .then(d => console.log("[saveZones] DB response:", d))
-      .catch(e => console.error("[saveZones] fetch error:", e));
+    await onZonesChange(updated);
   }, [onZonesChange]);
 
   const selectedZone = localZones.find(z => z.id === selectedZoneId) ?? null;
@@ -1582,7 +1568,9 @@ function ConfigPage({
           className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">−</button>
         <input
           type="range" min={min} max={max} value={local}
-          onChange={e => { const v = Number(e.target.value); setLocal(v); onChange(v); }}
+          onChange={e => setLocal(Number(e.target.value))}
+          onMouseUp={e => onChange(Number((e.target as HTMLInputElement).value))}
+          onTouchEnd={e => onChange(Number((e.target as HTMLInputElement).value))}
           className="flex-1 h-4 cursor-pointer"
           style={{ accentColor: "#3b82f6" }}
         />
