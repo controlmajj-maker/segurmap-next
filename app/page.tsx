@@ -159,24 +159,30 @@ export default function SegurMapApp() {
       if (cfgData.bg_offset_x)  setBgOffsetX(Number(cfgData.bg_offset_x));
       if (cfgData.bg_offset_y)  setBgOffsetY(Number(cfgData.bg_offset_y));
 
+      // Parse saved zones from config (used as fallback base)
+      let configZones: Zone[] | null = null;
+      if (cfgData.zones_config) {
+        try {
+          const parsed: Zone[] = JSON.parse(cfgData.zones_config);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            configZones = parsed;
+          }
+        } catch (e) { console.error("[loadData] parse error:", e); }
+      }
+
       // Active inspection owns zones while running
       const activeInsp = inspList.find((i: any) => i.is_active === true);
       if (activeInsp) {
         setCurrentInspection(activeInsp);
         setIsInspectionActive(true);
-        setZones(activeInsp.zones_data ?? INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
+        setZones(activeInsp.zones_data ?? (configZones ?? INITIAL_ZONES).map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
       } else {
         setIsInspectionActive(false);
         setCurrentInspection(null);
-        // Saved config zones take priority
-        if (cfgData.zones_config) {
-          try {
-            const saved: Zone[] = JSON.parse(cfgData.zones_config);
-            if (Array.isArray(saved) && saved.length > 0) {
-              console.log("[loadData] restoring", saved.length, "saved zones");
-              setZones(saved);
-            }
-          } catch (e) { console.error("[loadData] parse error:", e); }
+        // Saved config zones take priority over INITIAL_ZONES
+        if (configZones) {
+          console.log("[loadData] restoring", configZones.length, "saved zones");
+          setZones(configZones);
         }
         // If no config zones, leave INITIAL_ZONES as-is (default state)
       }
@@ -199,6 +205,20 @@ export default function SegurMapApp() {
     } catch (e) { console.error("[saveConfig] error:", e); }
   }, []);
 
+  // ─── Stable zones change handler ────────────────────────────────────────
+  const handleZonesChange = useCallback(async (newZones: Zone[]) => {
+    setZones(newZones);
+    try {
+      const res = await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zones_config: JSON.stringify(newZones) }),
+      });
+      const d = await res.json();
+      console.log("[handleZonesChange] saved", newZones.length, "zones →", d);
+    } catch (e) { console.error("[handleZonesChange] error:", e); }
+  }, []);
+
   async function handleStartInspection(title: string, location: string, inspector: string) {
     const res = await fetch("/api/inspections", {
       method: "POST",
@@ -207,7 +227,8 @@ export default function SegurMapApp() {
     });
     const newInsp: Inspection = await res.json();
     setCurrentInspection(newInsp);
-    const freshZones = INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} }));
+    // Use current configured zones (from config/DB) as base, resetting status and findings
+    const freshZones = zones.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} }));
     setZones(freshZones);
     // Save initial zones_data to DB so other devices can see the active inspection
     await fetch("/api/inspections", {
@@ -226,8 +247,17 @@ export default function SegurMapApp() {
     if (!currentInspection) {
       setIsInspectionActive(false);
       setCurrentInspection(null);
-      setZones(INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
       setShowCancelConfirm(false);
+      // Restore zones from config
+      try {
+        const cfgRes = await fetch("/api/config");
+        const cfgData: Record<string, string> = cfgRes.ok ? await cfgRes.json() : {};
+        if (cfgData.zones_config) {
+          const saved: Zone[] = JSON.parse(cfgData.zones_config);
+          if (Array.isArray(saved) && saved.length > 0) setZones(saved);
+          else setZones(INITIAL_ZONES);
+        } else setZones(INITIAL_ZONES);
+      } catch { setZones(INITIAL_ZONES); }
       return;
     }
     // Delete from DB — no trace left in auditorías
@@ -238,16 +268,27 @@ export default function SegurMapApp() {
     });
     setIsInspectionActive(false);
     setCurrentInspection(null);
-    setZones(INITIAL_ZONES.map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
     setShowCancelConfirm(false);
-    // Reload to reflect deletion
-    const [insRes, finRes] = await Promise.all([fetch("/api/inspections"), fetch("/api/findings")]);
+    // Reload everything to restore config zones
+    const [insRes, finRes, cfgRes] = await Promise.all([
+      fetch("/api/inspections"),
+      fetch("/api/findings"),
+      fetch("/api/config"),
+    ]);
     const insData = await insRes.json();
     const finData = await finRes.json();
+    const cfgData: Record<string, string> = cfgRes.ok ? await cfgRes.json() : {};
     const inspList = Array.isArray(insData) ? insData : [];
     setInspections(inspList);
     setAllFindings(Array.isArray(finData) ? finData : []);
-    if (inspList.length > 0 && inspList[0].zones_data) setZones(inspList[0].zones_data);
+    // Restore zones from config
+    if (cfgData.zones_config) {
+      try {
+        const saved: Zone[] = JSON.parse(cfgData.zones_config);
+        if (Array.isArray(saved) && saved.length > 0) { setZones(saved); return; }
+      } catch { /* fall through */ }
+    }
+    setZones(INITIAL_ZONES);
   }
 
   async function handleZoneSave(
@@ -335,16 +376,25 @@ export default function SegurMapApp() {
     setIsFinishing(false);
 
     // Full reload now that inspection is done
-    const [insRes, finRes] = await Promise.all([
+    const [insRes, finRes, cfgRes2] = await Promise.all([
       fetch("/api/inspections"),
       fetch("/api/findings"),
+      fetch("/api/config"),
     ]);
     const insData = await insRes.json();
     const finData = await finRes.json();
+    const cfgData2: Record<string, string> = cfgRes2.ok ? await cfgRes2.json() : {};
     const inspList = Array.isArray(insData) ? insData : [];
     setInspections(inspList);
     setAllFindings(Array.isArray(finData) ? finData : []);
-    if (inspList.length > 0 && inspList[0].zones_data) setZones(inspList[0].zones_data);
+    // Restore zones from config (not from last inspection)
+    if (cfgData2.zones_config) {
+      try {
+        const saved: Zone[] = JSON.parse(cfgData2.zones_config);
+        if (Array.isArray(saved) && saved.length > 0) { setZones(saved); }
+        else setZones(INITIAL_ZONES);
+      } catch { setZones(INITIAL_ZONES); }
+    } else setZones(INITIAL_ZONES);
 
     setView("history");
   }
@@ -810,7 +860,6 @@ export default function SegurMapApp() {
             bgOffsetY={bgOffsetY}
             bgZoom={bgZoom}
             bgInputRef={bgInputRef}
-            saveConfig={saveConfig}
             onBgChange={async (file) => {
               const formData = new FormData();
               formData.append("file", file);
@@ -833,10 +882,7 @@ export default function SegurMapApp() {
               setBackgroundImage(undefined);
               await saveConfig({ bg_url: "" });
             }}
-            onZonesChange={async (newZones) => {
-              setZones(newZones);
-              await saveConfig({ zones_config: JSON.stringify(newZones) });
-            }}
+            onZonesChange={handleZonesChange}
             onDeleteAll={handleDeleteAll}
           />
         )}
@@ -1419,7 +1465,7 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
 // ─── Config Page ──────────────────────────────────────────────────────────────
 function ConfigPage({
   inspectionCount, findingCount, zones, backgroundImage,
-  bgOffsetX, bgOffsetY, bgZoom, bgInputRef, saveConfig,
+  bgOffsetX, bgOffsetY, bgZoom, bgInputRef,
   onBgChange, onBgOffsetX, onBgOffsetY, onBgZoom, onBgRemove,
   onZonesChange, onDeleteAll,
 }: {
@@ -1431,7 +1477,6 @@ function ConfigPage({
   bgOffsetY: number;
   bgZoom: number;
   bgInputRef: React.RefObject<HTMLInputElement>;
-  saveConfig: (patch: Record<string, string | number>) => Promise<void> | void;
   onBgChange: (f: File) => Promise<void>;
   onBgOffsetX: (v: number) => Promise<void> | void;
   onBgOffsetY: (v: number) => Promise<void> | void;
@@ -1453,9 +1498,12 @@ function ConfigPage({
 
   // Mirror parent zones into local state (only on first load or external change)
   const [localZones, setLocalZones] = useState<Zone[]>(zones);
-  const prevZonesRef = useRef(zones);
+  const prevZonesRef = useRef<Zone[]>(zones);
   useEffect(() => {
-    if (zones !== prevZonesRef.current) {
+    // Deep compare by JSON to avoid reference comparison issues
+    const zonesJson = JSON.stringify(zones);
+    const prevJson = JSON.stringify(prevZonesRef.current);
+    if (zonesJson !== prevJson) {
       prevZonesRef.current = zones;
       setLocalZones(zones);
     }
@@ -1465,6 +1513,7 @@ function ConfigPage({
   const saveZones = useCallback(async (updated: Zone[]) => {
     console.log("[saveZones] saving", updated.length, "zones");
     setLocalZones(updated);
+    prevZonesRef.current = updated; // prevent useEffect from overwriting
     await onZonesChange(updated);
   }, [onZonesChange]);
 
@@ -1670,11 +1719,11 @@ function ConfigPage({
                 <div className="space-y-2 pb-3 border-b border-slate-100">
                   <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest">Ajuste del plano</p>
                   <BgSlider label="Zoom" value={bgZoom} min={50} max={300}
-                    onChange={v => { onBgZoom(v); saveConfig({ bg_zoom: v }); }} />
+                    onChange={v => { onBgZoom(v); }} />
                   <BgSlider label="Horiz." value={bgOffsetX} min={0} max={100}
-                    onChange={v => { onBgOffsetX(v); saveConfig({ bg_offset_x: v }); }} />
+                    onChange={v => { onBgOffsetX(v); }} />
                   <BgSlider label="Vert." value={bgOffsetY} min={0} max={100}
-                    onChange={v => { onBgOffsetY(v); saveConfig({ bg_offset_y: v }); }} />
+                    onChange={v => { onBgOffsetY(v); }} />
                 </div>
               )}
 
