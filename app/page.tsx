@@ -126,15 +126,9 @@ export default function SegurMapApp() {
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
   const [expandedInspectionId, setExpandedInspectionId] = useState<string | null>(null);
-  const [backgroundImage, setBackgroundImage] = useState<string | undefined>();
-  const [bgOffsetX, setBgOffsetX] = useState(50);
-  const [bgOffsetY, setBgOffsetY] = useState(50);
-  const [bgZoom, setBgZoom] = useState(100);
   const [isLoading, setIsLoading] = useState(true);
   const [showNewInspectionModal, setShowNewInspectionModal] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const bgInputRef = useRef<HTMLInputElement>(null);
-  // bgOffsetX, bgOffsetY, bgZoom, backgroundImage se mantienen en estado para ConfigPage
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -153,12 +147,6 @@ export default function SegurMapApp() {
       setAllFindings(finList);
 
       console.log("[loadData] cfgData keys:", Object.keys(cfgData), "zones_config len:", cfgData.zones_config?.length ?? 0);
-
-      // Restore background image and position from config
-      if (cfgData.bg_url)       setBackgroundImage(cfgData.bg_url);
-      if (cfgData.bg_zoom)      setBgZoom(Number(cfgData.bg_zoom));
-      if (cfgData.bg_offset_x)  setBgOffsetX(Number(cfgData.bg_offset_x));
-      if (cfgData.bg_offset_y)  setBgOffsetY(Number(cfgData.bg_offset_y));
 
       // Parse saved zones from config (used as fallback base)
       let configZones: Zone[] | null = null;
@@ -180,19 +168,36 @@ export default function SegurMapApp() {
       } else {
         setIsInspectionActive(false);
         setCurrentInspection(null);
-        // zones_config ALWAYS wins — it is the admin source of truth for zone layout.
-        // lastCompleted.zones_data is only used if no zones_config exists yet.
-        if (configZones) {
-          console.log("[loadData] restoring", configZones.length, "config zones (zones_config priority)");
-          setZones(configZones);
-        } else {
-          const lastCompleted = inspList.find((i: any) => !i.is_active);
+        // Strategy: zones_config owns the layout (names, positions).
+        // Last completed inspection owns the visual status (OK/ISSUE).
+        // We merge both: base = zones_config, then overlay status from last inspection.
+        const lastCompleted = inspList.find((i: any) => !i.is_active);
+        const baseZones = configZones ?? (
+          lastCompleted?.zones_data && Array.isArray(lastCompleted.zones_data) && lastCompleted.zones_data.length > 0
+            ? lastCompleted.zones_data
+            : null
+        );
+        if (baseZones) {
           if (lastCompleted?.zones_data && Array.isArray(lastCompleted.zones_data) && lastCompleted.zones_data.length > 0) {
-            console.log("[loadData] no zones_config, falling back to last inspection zones_data");
-            setZones(lastCompleted.zones_data);
+            // Build a status map from the last inspection by zone name (name is stable, id may drift)
+            const statusMap: Record<string, ZoneStatus> = {};
+            for (const z of lastCompleted.zones_data as Zone[]) {
+              statusMap[z.id]   = z.status;   // match by id first
+              statusMap[z.name] = z.status;   // also index by name as fallback
+            }
+            // Overlay: keep config layout, apply last inspection status
+            const merged = baseZones.map((z: Zone) => ({
+              ...z,
+              status: statusMap[z.id] ?? statusMap[z.name] ?? z.status,
+            }));
+            console.log("[loadData] merged zones_config layout + last inspection status");
+            setZones(merged);
+          } else {
+            console.log("[loadData] restoring", baseZones.length, "config zones (no inspection status)");
+            setZones(baseZones);
           }
-          // If neither, leave INITIAL_ZONES as-is
         }
+        // If neither, leave INITIAL_ZONES as-is
       }
     } catch (e) { console.error("[loadData] error:", e); }
     setIsLoading(false);
@@ -951,33 +956,6 @@ export default function SegurMapApp() {
             inspectionCount={inspections.length}
             findingCount={allFindings.length}
             zones={zones}
-            backgroundImage={backgroundImage}
-            bgOffsetX={bgOffsetX}
-            bgOffsetY={bgOffsetY}
-            bgZoom={bgZoom}
-            bgInputRef={bgInputRef}
-            onBgChange={async (file) => {
-              const formData = new FormData();
-              formData.append("file", file);
-              if (backgroundImage) formData.append("previousUrl", backgroundImage);
-              const res = await fetch("/api/upload", { method: "POST", body: formData });
-              const data = await res.json();
-              setBackgroundImage(data.url);
-              await saveConfig({ bg_url: data.url });
-            }}
-            onBgOffsetX={(v) => { setBgOffsetX(v); saveConfig({ bg_offset_x: v }); }}
-            onBgOffsetY={(v) => { setBgOffsetY(v); saveConfig({ bg_offset_y: v }); }}
-            onBgZoom={(v) => { setBgZoom(v); saveConfig({ bg_zoom: v }); }}
-            onBgRemove={() => {
-              if (backgroundImage) {
-                fetch("/api/upload", {
-                  method: "POST",
-                  body: (() => { const f = new FormData(); f.append("previousUrl", backgroundImage); return f; })(),
-                }).catch(() => {});
-              }
-              setBackgroundImage(undefined);
-              saveConfig({ bg_url: "" });
-            }}
             onZonesChange={handleZonesChange}
             onDeleteAll={handleDeleteAll}
           />
@@ -1507,28 +1485,15 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
 // IMPORTANT: No local zones state here. Zones live ONLY in parent.
 // All changes go directly through onZonesChange → handleZonesChange → DB.
 function ConfigPage({
-  inspectionCount, findingCount, zones, backgroundImage,
-  bgOffsetX, bgOffsetY, bgZoom, bgInputRef,
-  onBgChange, onBgOffsetX, onBgOffsetY, onBgZoom, onBgRemove,
+  inspectionCount, findingCount, zones,
   onZonesChange, onDeleteAll,
 }: {
   inspectionCount: number;
   findingCount: number;
   zones: Zone[];
-  backgroundImage?: string;
-  bgOffsetX: number;
-  bgOffsetY: number;
-  bgZoom: number;
-  bgInputRef: React.RefObject<HTMLInputElement>;
-  onBgChange: (f: File) => Promise<void>;
-  onBgOffsetX: (v: number) => void;
-  onBgOffsetY: (v: number) => void;
-  onBgZoom: (v: number) => void;
-  onBgRemove: () => void;
   onZonesChange: (zones: Zone[]) => void;
   onDeleteAll: () => Promise<void>;
 }) {
-  const [isUploadingBg, setIsUploadingBg] = useState(false);
   const [newZoneName, setNewZoneName] = useState("");
   const [zoneToDelete, setZoneToDelete] = useState<Zone | null>(null);
   const [deleteWord, setDeleteWord] = useState("");
@@ -1599,76 +1564,7 @@ function ConfigPage({
     setHistDeleteWord("");
   };
 
-  const handleUpdateZoneProp = async (zoneId: string, prop: keyof Zone, value: number) => {
-    const updated = zones.map(z => z.id === zoneId ? { ...z, [prop]: value } : z);
-    await commitZones(updated);
-  };
 
-  const bgStyle: React.CSSProperties = backgroundImage ? {
-    backgroundImage: `url(${backgroundImage})`,
-    backgroundSize: `${bgZoom}%`,
-    backgroundPosition: `${bgOffsetX}% ${bgOffsetY}%`,
-    backgroundRepeat: "no-repeat",
-  } : {};
-
-  // Slider — shows local value while dragging, calls onChange only on release
-  function ZoneSlider({ label, value, min, max, onChange }: {
-    label: string; value: number; min: number; max: number;
-    onChange: (v: number) => void;
-  }) {
-    const [local, setLocal] = useState(value);
-    useEffect(() => { setLocal(value); }, [value]);
-    return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0 leading-tight">
-          {label}<br/><span className="text-slate-700">{Math.round(local)}</span>
-        </span>
-        <button
-          onClick={() => { const v = Math.max(min, local - 2); setLocal(v); onChange(v); }}
-          className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">−</button>
-        <input
-          type="range" min={min} max={max} value={local}
-          onChange={e => setLocal(Number(e.target.value))}
-          onMouseUp={e => onChange(Number((e.target as HTMLInputElement).value))}
-          onTouchEnd={e => onChange(Number((e.target as HTMLInputElement).value))}
-          className="flex-1 h-4 cursor-pointer"
-          style={{ accentColor: "#f97316" }}
-        />
-        <button
-          onClick={() => { const v = Math.min(max, local + 2); setLocal(v); onChange(v); }}
-          className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">+</button>
-      </div>
-    );
-  }
-
-  function BgSlider({ label, value, min, max, onChange }: {
-    label: string; value: number; min: number; max: number;
-    onChange: (v: number) => void;
-  }) {
-    const [local, setLocal] = useState(value);
-    useEffect(() => { setLocal(value); }, [value]);
-    return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-[7px] font-black text-slate-400 uppercase w-12 shrink-0 leading-tight">
-          {label}<br/><span className="text-slate-700">{Math.round(local)}</span>
-        </span>
-        <button
-          onClick={() => { const v = Math.max(min, local - 5); setLocal(v); onChange(v); }}
-          className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">−</button>
-        <input
-          type="range" min={min} max={max} value={local}
-          onChange={e => setLocal(Number(e.target.value))}
-          onMouseUp={e => onChange(Number((e.target as HTMLInputElement).value))}
-          onTouchEnd={e => onChange(Number((e.target as HTMLInputElement).value))}
-          className="flex-1 h-4 cursor-pointer"
-          style={{ accentColor: "#3b82f6" }}
-        />
-        <button
-          onClick={() => { const v = Math.min(max, local + 5); setLocal(v); onChange(v); }}
-          className="w-6 h-6 bg-slate-100 rounded-md font-black text-xs hover:bg-slate-200 shrink-0">+</button>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
@@ -1700,112 +1596,14 @@ function ConfigPage({
         </div>
       </div>
 
-      {/* ── Plano + Zonas ── */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">🗺️</div>
-          <div className="flex-1">
-            <h3 className="font-black text-slate-800 text-sm">Plano y Zonas</h3>
-            <p className="text-[9px] text-slate-400 font-bold uppercase">Selecciona una zona en el mapa para ajustarla</p>
-          </div>
-        </div>
-
-        <div className="p-4">
-          <input ref={bgInputRef} type="file" accept="image/*" className="hidden"
-            onChange={async e => {
-              const f = e.target.files?.[0];
-              if (!f) return;
-              setIsUploadingBg(true);
-              await onBgChange(f);
-              setIsUploadingBg(false);
-            }}
-          />
-
-          <div className="flex flex-col lg:flex-row gap-4">
-
-            {/* Map canvas */}
-            <div className="lg:w-[420px] shrink-0 space-y-2">
-              <div
-                className="relative w-full rounded-xl border-2 border-slate-200 overflow-hidden bg-slate-100"
-                style={{ aspectRatio: "16/9", ...(backgroundImage ? bgStyle : {}) }}
-              >
-                {!backgroundImage && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none opacity-30">
-                    <p className="text-3xl">🗺️</p>
-                    <p className="text-[9px] font-black text-slate-600 uppercase mt-1">Sin plano</p>
-                  </div>
-                )}
-                {zones.map(zone => (
-                  <div key={zone.id}
-                    onClick={() => setSelectedZoneId(selectedZoneId === zone.id ? null : zone.id)}
-                    className={`absolute border-2 rounded-lg flex items-center justify-center cursor-pointer transition-colors ${
-                      selectedZoneId === zone.id ? "border-orange-500 bg-orange-400/40"
-                      : zone.status === "ISSUE" ? "border-red-400 bg-red-300/25"
-                      : zone.status === "OK" ? "border-green-400 bg-green-300/25"
-                      : "border-white/70 bg-white/10 hover:border-blue-400 hover:bg-blue-200/25"
-                    }`}
-                    style={{ left:`${zone.x}%`, top:`${zone.y}%`, width:`${zone.width}%`, height:`${zone.height}%` }}
-                  >
-                    <span className="text-[6px] font-black text-white drop-shadow uppercase text-center px-0.5 leading-tight">{zone.name}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex gap-2">
-                <button onClick={() => bgInputRef.current?.click()} disabled={isUploadingBg}
-                  className="flex-1 py-1.5 bg-blue-600 text-white rounded-lg font-black text-[9px] uppercase shadow hover:bg-blue-700 transition-all">
-                  {isUploadingBg ? "SUBIENDO..." : backgroundImage ? "CAMBIAR PLANO" : "📁 CARGAR PLANO"}
-                </button>
-                {backgroundImage && (
-                  <button onClick={onBgRemove}
-                    className="py-1.5 px-3 bg-red-50 text-red-500 border border-red-200 rounded-lg font-black text-[9px] uppercase hover:bg-red-100">
-                    QUITAR
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Right panel */}
-            <div className="flex-1 min-w-0 space-y-4">
-
-              {/* Background controls */}
-              {backgroundImage && (
-                <div className="space-y-2 pb-3 border-b border-slate-100">
-                  <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest">Ajuste del plano</p>
-                  <BgSlider label="Zoom" value={bgZoom} min={50} max={300} onChange={onBgZoom} />
-                  <BgSlider label="Horiz." value={bgOffsetX} min={0} max={100} onChange={onBgOffsetX} />
-                  <BgSlider label="Vert." value={bgOffsetY} min={0} max={100} onChange={onBgOffsetY} />
-                </div>
-              )}
-
-              {/* Zone position controls */}
-              {selectedZone ? (
-                <div className="space-y-2">
-                  <p className="text-[8px] font-black text-orange-500 uppercase tracking-widest">📐 {selectedZone.name}</p>
-                  <ZoneSlider label="Pos X" value={selectedZone.x} min={0} max={95}
-                    onChange={v => handleUpdateZoneProp(selectedZone.id, "x", v)} />
-                  <ZoneSlider label="Pos Y" value={selectedZone.y} min={0} max={95}
-                    onChange={v => handleUpdateZoneProp(selectedZone.id, "y", v)} />
-                  <ZoneSlider label="Ancho" value={selectedZone.width} min={5} max={90}
-                    onChange={v => handleUpdateZoneProp(selectedZone.id, "width", v)} />
-                  <ZoneSlider label="Alto" value={selectedZone.height} min={5} max={90}
-                    onChange={v => handleUpdateZoneProp(selectedZone.id, "height", v)} />
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-6 opacity-30">
-                  <p className="text-2xl">👆</p>
-                  <p className="text-[9px] font-black text-slate-500 uppercase mt-1">Toca una zona para ajustarla</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* ── Zonas de Inspección ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 bg-orange-100 rounded-xl flex items-center justify-center">📐</div>
+          <div className="w-8 h-8 bg-violet-100 rounded-xl flex items-center justify-center">
+            <svg className="w-4 h-4 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+          </div>
           <div>
             <h3 className="font-black text-slate-800 text-sm">Zonas de Inspección</h3>
             <p className="text-[9px] text-slate-400 font-bold uppercase">Crear · renombrar · eliminar</p>
