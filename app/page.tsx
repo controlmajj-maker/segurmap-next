@@ -604,14 +604,13 @@ export default function SegurMapApp() {
               const inspFindings = allFindings.filter(f => f.inspection_id === lastCompleted.id);
               const closedCount = inspFindings.filter(f => f.is_closed === true || (f as any).is_closed === "true").length;
               const openCount = inspFindings.filter(f => f.is_closed !== true && (f as any).is_closed !== "true").length;
-              const zonesEvaluated = lastCompleted.zones_data
-                ? (lastCompleted.zones_data as Zone[]).filter((z: Zone) => z.status !== "PENDING").length
+              const lastZonesData: Zone[] = Array.isArray(lastCompleted.zones_data) ? lastCompleted.zones_data : [];
+              const zonesEvaluated = lastZonesData.length > 0
+                ? lastZonesData.filter((z: Zone) => z.status !== "PENDING").length
                 : zones.filter(z => z.status !== "PENDING").length;
-              const totalZones = lastCompleted.zones_data
-                ? (lastCompleted.zones_data as Zone[]).length
-                : zones.length;
-              const issueZonesCount = lastCompleted.zones_data
-                ? (lastCompleted.zones_data as Zone[]).filter((z: Zone) => z.status === "ISSUE").length
+              const totalZones = lastZonesData.length > 0 ? lastZonesData.length : zones.length;
+              const issueZonesCount = lastZonesData.length > 0
+                ? lastZonesData.filter((z: Zone) => z.status === "ISSUE").length
                 : zones.filter(z => z.status === "ISSUE").length;
               return (
                 <>
@@ -619,17 +618,15 @@ export default function SegurMapApp() {
                 <div className="grid grid-cols-3 gap-3">
                   <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex flex-col items-center justify-center text-center">
                     <p className="text-2xl md:text-3xl font-black text-slate-800">{zonesEvaluated}<span className="text-slate-300">/{totalZones}</span></p>
-                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">Zonas<br/>Evaluadas</p>
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">Zonas Evaluadas</p>
                   </div>
                   <div className={`rounded-2xl border shadow-sm p-4 flex flex-col items-center justify-center text-center ${openCount > 0 ? "bg-red-50 border-red-100" : "bg-white border-slate-100"}`}>
                     <p className={`text-2xl md:text-3xl font-black ${openCount > 0 ? "text-red-600" : "text-slate-800"}`}>{inspFindings.length}</p>
-                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">Hallazgos<br/>Totales</p>
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">Hallazgos Totales</p>
                   </div>
                   <div className={`rounded-2xl border shadow-sm p-4 flex flex-col items-center justify-center text-center ${openCount > 0 ? "bg-orange-50 border-orange-100" : "bg-green-50 border-green-100"}`}>
                     <p className={`text-2xl md:text-3xl font-black ${openCount > 0 ? "text-orange-600" : "text-green-600"}`}>{openCount > 0 ? openCount : closedCount}</p>
-                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">{openCount > 0 ? "Pendientes
-de Cierre" : "Hallazgos
-Resueltos"}</p>
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">{openCount > 0 ? <>Pendientes<br/>de Cierre</> : <>Hallazgos<br/>Resueltos</>}</p>
                   </div>
                 </div>
 
