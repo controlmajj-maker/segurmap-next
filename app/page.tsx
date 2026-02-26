@@ -196,7 +196,7 @@ export default function SegurMapApp() {
   const saveConfig = useCallback(async (patch: Record<string, string | number>) => {
     try {
       const res = await fetch("/api/config", {
-        method: "PUT",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
@@ -223,7 +223,7 @@ export default function SegurMapApp() {
     }));
     // 3. Persist to DB — fire and forget (async in background)
     fetch("/api/config", {
-      method: "PUT",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ zones_config: JSON.stringify(cleanZones) }),
     })
@@ -436,7 +436,7 @@ export default function SegurMapApp() {
     setCurrentInspection(null);
     // Reset zones_config in DB to initial zones
     fetch("/api/config", {
-      method: "PUT",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ zones_config: JSON.stringify(INITIAL_ZONES) }),
     }).catch(() => {});
