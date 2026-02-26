@@ -205,11 +205,12 @@ export default function SegurMapApp() {
     } catch (e) { console.error("[saveConfig] error:", e); }
   }, []);
 
-  // ─── Stable zones change handler ────────────────────────────────────────
-  // Always saves zones with PENDING status so config state is clean
-  const handleZonesChange = useCallback(async (newZones: Zone[]) => {
+  // ─── Zones change handler ───────────────────────────────────────────────
+  // Synchronous state update + fire-and-forget DB save
+  const handleZonesChange = useCallback((newZones: Zone[]) => {
+    // 1. Update React state immediately (UI responds instantly)
     setZones(newZones);
-    // Strip inspection-time state before saving to config
+    // 2. Build clean config version (PENDING status, no findings)
     const cleanZones = newZones.map(z => ({
       id: z.id,
       name: z.name,
@@ -220,20 +221,18 @@ export default function SegurMapApp() {
       height: z.height,
       findings: {},
     }));
-    try {
-      const res = await fetch("/api/config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ zones_config: JSON.stringify(cleanZones) }),
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        console.error("[handleZonesChange] HTTP error:", res.status, errText);
-        return;
-      }
-      const d = await res.json();
-      console.log("[handleZonesChange] saved", cleanZones.length, "zones →", d);
-    } catch (e) { console.error("[handleZonesChange] error:", e); }
+    // 3. Persist to DB — fire and forget (async in background)
+    fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ zones_config: JSON.stringify(cleanZones) }),
+    })
+      .then(res => {
+        if (!res.ok) return res.text().then(t => { throw new Error(`HTTP ${res.status}: ${t}`); });
+        return res.json();
+      })
+      .then(d => console.log("[zones saved]", cleanZones.length, "zones, keys:", d?.keys))
+      .catch(e => console.error("[zones save FAILED]", e.message));
   }, []);
 
   async function handleStartInspection(title: string, location: string, inspector: string) {
@@ -886,10 +885,10 @@ export default function SegurMapApp() {
               setBackgroundImage(data.url);
               await saveConfig({ bg_url: data.url });
             }}
-            onBgOffsetX={async (v) => { setBgOffsetX(v); await saveConfig({ bg_offset_x: v }); }}
-            onBgOffsetY={async (v) => { setBgOffsetY(v); await saveConfig({ bg_offset_y: v }); }}
-            onBgZoom={async (v) => { setBgZoom(v); await saveConfig({ bg_zoom: v }); }}
-            onBgRemove={async () => {
+            onBgOffsetX={(v) => { setBgOffsetX(v); saveConfig({ bg_offset_x: v }); }}
+            onBgOffsetY={(v) => { setBgOffsetY(v); saveConfig({ bg_offset_y: v }); }}
+            onBgZoom={(v) => { setBgZoom(v); saveConfig({ bg_zoom: v }); }}
+            onBgRemove={() => {
               if (backgroundImage) {
                 fetch("/api/upload", {
                   method: "POST",
@@ -897,7 +896,7 @@ export default function SegurMapApp() {
                 }).catch(() => {});
               }
               setBackgroundImage(undefined);
-              await saveConfig({ bg_url: "" });
+              saveConfig({ bg_url: "" });
             }}
             onZonesChange={handleZonesChange}
             onDeleteAll={handleDeleteAll}
@@ -1479,7 +1478,11 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
 }
 
 
+
+
 // ─── Config Page ──────────────────────────────────────────────────────────────
+// IMPORTANT: No local zones state here. Zones live ONLY in parent.
+// All changes go directly through onZonesChange → handleZonesChange → DB.
 function ConfigPage({
   inspectionCount, findingCount, zones, backgroundImage,
   bgOffsetX, bgOffsetY, bgZoom, bgInputRef,
@@ -1495,11 +1498,11 @@ function ConfigPage({
   bgZoom: number;
   bgInputRef: React.RefObject<HTMLInputElement>;
   onBgChange: (f: File) => Promise<void>;
-  onBgOffsetX: (v: number) => Promise<void> | void;
-  onBgOffsetY: (v: number) => Promise<void> | void;
-  onBgZoom: (v: number) => Promise<void> | void;
-  onBgRemove: () => Promise<void> | void;
-  onZonesChange: (zones: Zone[]) => Promise<void> | void;
+  onBgOffsetX: (v: number) => void;
+  onBgOffsetY: (v: number) => void;
+  onBgZoom: (v: number) => void;
+  onBgRemove: () => void;
+  onZonesChange: (zones: Zone[]) => void;
   onDeleteAll: () => Promise<void>;
 }) {
   const [isUploadingBg, setIsUploadingBg] = useState(false);
@@ -1512,32 +1515,27 @@ function ConfigPage({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [histDeleteWord, setHistDeleteWord] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isSavingZones, setIsSavingZones] = useState(false);
+  const [lastSaveStatus, setLastSaveStatus] = useState<"idle"|"saving"|"ok"|"error">("idle");
 
-  // Mirror parent zones into local state (only on first load or external change)
-  const [localZones, setLocalZones] = useState<Zone[]>(zones);
-  const prevZonesRef = useRef<Zone[]>(zones);
-  useEffect(() => {
-    // Deep compare by JSON to avoid reference comparison issues
-    const zonesJson = JSON.stringify(zones);
-    const prevJson = JSON.stringify(prevZonesRef.current);
-    if (zonesJson !== prevJson) {
-      prevZonesRef.current = zones;
-      setLocalZones(zones);
+  const selectedZone = zones.find(z => z.id === selectedZoneId) ?? null;
+
+  // All zone mutations go through this single function
+  const commitZones = async (updated: Zone[]) => {
+    setIsSavingZones(true);
+    setLastSaveStatus("saving");
+    try {
+      onZonesChange(updated); // updates parent state immediately
+      setLastSaveStatus("ok");
+      setTimeout(() => setLastSaveStatus("idle"), 2000);
+    } catch {
+      setLastSaveStatus("error");
+    } finally {
+      setIsSavingZones(false);
     }
-  }, [zones]);
+  };
 
-  // Save zones: update local state + call parent (which persists to DB)
-  const saveZones = useCallback(async (updated: Zone[]) => {
-    console.log("[saveZones] saving", updated.length, "zones");
-    setLocalZones(updated);
-    prevZonesRef.current = updated; // prevent useEffect from overwriting
-    await onZonesChange(updated);
-  }, [onZonesChange]);
-
-  const selectedZone = localZones.find(z => z.id === selectedZoneId) ?? null;
-
-  // Zone CRUD
-  const handleAddZone = () => {
+  const handleAddZone = async () => {
     if (!newZoneName.trim()) return;
     const newZone: Zone = {
       id: `z${Date.now()}`,
@@ -1546,24 +1544,27 @@ function ConfigPage({
       x: 10, y: 10, width: 25, height: 25,
       findings: {},
     };
-    saveZones([...localZones, newZone]);
+    const updated = [...zones, newZone];
     setNewZoneName("");
     setSelectedZoneId(newZone.id);
+    await commitZones(updated);
   };
 
-  const handleSaveZoneName = (zoneId: string) => {
+  const handleSaveZoneName = async (zoneId: string) => {
     if (!editingZoneName.trim()) return;
-    saveZones(localZones.map(z => z.id === zoneId ? { ...z, name: editingZoneName.trim() } : z));
+    const updated = zones.map(z => z.id === zoneId ? { ...z, name: editingZoneName.trim() } : z);
     setEditingZoneId(null);
     setEditingZoneName("");
+    await commitZones(updated);
   };
 
-  const handleConfirmDeleteZone = () => {
+  const handleConfirmDeleteZone = async () => {
     if (!zoneToDelete || deleteWord !== "BORRAR") return;
-    saveZones(localZones.filter(z => z.id !== zoneToDelete.id));
+    const updated = zones.filter(z => z.id !== zoneToDelete.id);
     if (selectedZoneId === zoneToDelete.id) setSelectedZoneId(null);
     setZoneToDelete(null);
     setDeleteWord("");
+    await commitZones(updated);
   };
 
   const handleConfirmDeleteHistory = async () => {
@@ -1575,10 +1576,9 @@ function ConfigPage({
     setHistDeleteWord("");
   };
 
-  // Update a single zone property and save
-  const updateZoneProp = (zoneId: string, prop: keyof Zone, value: number) => {
-    const updated = localZones.map(z => z.id === zoneId ? { ...z, [prop]: value } : z);
-    saveZones(updated);
+  const handleUpdateZoneProp = async (zoneId: string, prop: keyof Zone, value: number) => {
+    const updated = zones.map(z => z.id === zoneId ? { ...z, [prop]: value } : z);
+    await commitZones(updated);
   };
 
   const bgStyle: React.CSSProperties = backgroundImage ? {
@@ -1588,7 +1588,7 @@ function ConfigPage({
     backgroundRepeat: "no-repeat",
   } : {};
 
-  // Slider component — uses local state during drag, saves on mouseUp
+  // Slider — shows local value while dragging, calls onChange only on release
   function ZoneSlider({ label, value, min, max, onChange }: {
     label: string; value: number; min: number; max: number;
     onChange: (v: number) => void;
@@ -1649,7 +1649,21 @@ function ConfigPage({
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
-      <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">Configuración</h2>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">Configuración</h2>
+        {lastSaveStatus === "saving" && (
+          <span className="text-[10px] font-black text-blue-500 uppercase flex items-center gap-1">
+            <span className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin inline-block"/>
+            Guardando...
+          </span>
+        )}
+        {lastSaveStatus === "ok" && (
+          <span className="text-[10px] font-black text-green-600 uppercase">✓ Guardado</span>
+        )}
+        {lastSaveStatus === "error" && (
+          <span className="text-[10px] font-black text-red-600 uppercase">✕ Error al guardar</span>
+        )}
+      </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3">
@@ -1686,7 +1700,7 @@ function ConfigPage({
 
           <div className="flex flex-col lg:flex-row gap-4">
 
-            {/* Canvas del mapa — siempre visible */}
+            {/* Map canvas */}
             <div className="lg:w-[420px] shrink-0 space-y-2">
               <div
                 className="relative w-full rounded-xl border-2 border-slate-200 overflow-hidden bg-slate-100"
@@ -1698,7 +1712,7 @@ function ConfigPage({
                     <p className="text-[9px] font-black text-slate-600 uppercase mt-1">Sin plano</p>
                   </div>
                 )}
-                {localZones.map(zone => (
+                {zones.map(zone => (
                   <div key={zone.id}
                     onClick={() => setSelectedZoneId(selectedZoneId === zone.id ? null : zone.id)}
                     className={`absolute border-2 rounded-lg flex items-center justify-center cursor-pointer transition-colors ${
@@ -1728,34 +1742,31 @@ function ConfigPage({
               </div>
             </div>
 
-            {/* Panel derecho con controles */}
+            {/* Right panel */}
             <div className="flex-1 min-w-0 space-y-4">
 
-              {/* Controles de plano */}
+              {/* Background controls */}
               {backgroundImage && (
                 <div className="space-y-2 pb-3 border-b border-slate-100">
                   <p className="text-[8px] font-black text-blue-500 uppercase tracking-widest">Ajuste del plano</p>
-                  <BgSlider label="Zoom" value={bgZoom} min={50} max={300}
-                    onChange={v => { onBgZoom(v); }} />
-                  <BgSlider label="Horiz." value={bgOffsetX} min={0} max={100}
-                    onChange={v => { onBgOffsetX(v); }} />
-                  <BgSlider label="Vert." value={bgOffsetY} min={0} max={100}
-                    onChange={v => { onBgOffsetY(v); }} />
+                  <BgSlider label="Zoom" value={bgZoom} min={50} max={300} onChange={onBgZoom} />
+                  <BgSlider label="Horiz." value={bgOffsetX} min={0} max={100} onChange={onBgOffsetX} />
+                  <BgSlider label="Vert." value={bgOffsetY} min={0} max={100} onChange={onBgOffsetY} />
                 </div>
               )}
 
-              {/* Controles de zona seleccionada */}
+              {/* Zone position controls */}
               {selectedZone ? (
                 <div className="space-y-2">
                   <p className="text-[8px] font-black text-orange-500 uppercase tracking-widest">📐 {selectedZone.name}</p>
                   <ZoneSlider label="Pos X" value={selectedZone.x} min={0} max={95}
-                    onChange={v => updateZoneProp(selectedZone.id, "x", v)} />
+                    onChange={v => handleUpdateZoneProp(selectedZone.id, "x", v)} />
                   <ZoneSlider label="Pos Y" value={selectedZone.y} min={0} max={95}
-                    onChange={v => updateZoneProp(selectedZone.id, "y", v)} />
+                    onChange={v => handleUpdateZoneProp(selectedZone.id, "y", v)} />
                   <ZoneSlider label="Ancho" value={selectedZone.width} min={5} max={90}
-                    onChange={v => updateZoneProp(selectedZone.id, "width", v)} />
+                    onChange={v => handleUpdateZoneProp(selectedZone.id, "width", v)} />
                   <ZoneSlider label="Alto" value={selectedZone.height} min={5} max={90}
-                    onChange={v => updateZoneProp(selectedZone.id, "height", v)} />
+                    onChange={v => handleUpdateZoneProp(selectedZone.id, "height", v)} />
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-6 opacity-30">
@@ -1783,14 +1794,14 @@ function ConfigPage({
               onKeyDown={e => e.key === "Enter" && handleAddZone()}
               placeholder="Nombre de nueva zona..."
               className="flex-1 px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-medium focus:border-blue-500 outline-none transition-all" />
-            <button onClick={handleAddZone} disabled={!newZoneName.trim()}
-              className={`px-3 py-2 rounded-xl font-black text-xs uppercase transition-all ${newZoneName.trim() ? "bg-slate-900 text-white hover:bg-black shadow" : "bg-slate-100 text-slate-300"}`}>
+            <button onClick={handleAddZone} disabled={!newZoneName.trim() || isSavingZones}
+              className={`px-3 py-2 rounded-xl font-black text-xs uppercase transition-all ${newZoneName.trim() && !isSavingZones ? "bg-slate-900 text-white hover:bg-black shadow" : "bg-slate-100 text-slate-300"}`}>
               + ADD
             </button>
           </div>
 
           <div className="space-y-1.5">
-            {localZones.map(zone => {
+            {zones.map(zone => {
               const isSelected = selectedZoneId === zone.id;
               const isEditing = editingZoneId === zone.id;
               return (
@@ -1841,7 +1852,7 @@ function ConfigPage({
         </div>
       </div>
 
-      {/* ── Eliminar Historial Completo ── */}
+      {/* ── Eliminar Historial ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
           <div className="w-8 h-8 bg-red-100 rounded-xl flex items-center justify-center">⚠️</div>
