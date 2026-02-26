@@ -179,12 +179,16 @@ export default function SegurMapApp() {
       } else {
         setIsInspectionActive(false);
         setCurrentInspection(null);
-        // Saved config zones take priority over INITIAL_ZONES
-        if (configZones) {
-          console.log("[loadData] restoring", configZones.length, "saved zones");
+        // Show last completed inspection zones with their OK/ISSUE status
+        const lastCompleted = inspList.find((i: any) => !i.is_active);
+        if (lastCompleted?.zones_data && Array.isArray(lastCompleted.zones_data) && lastCompleted.zones_data.length > 0) {
+          console.log("[loadData] restoring last inspection zones with status");
+          setZones(lastCompleted.zones_data);
+        } else if (configZones) {
+          console.log("[loadData] restoring", configZones.length, "config zones");
           setZones(configZones);
         }
-        // If no config zones, leave INITIAL_ZONES as-is (default state)
+        // If neither, leave INITIAL_ZONES as-is
       }
     } catch (e) { console.error("[loadData] error:", e); }
     setIsLoading(false);
@@ -387,32 +391,27 @@ export default function SegurMapApp() {
       body: JSON.stringify({ id: currentInspection.id, summary, zones_data: zones, is_active: false }),
     });
 
+    // Keep the zones with their final OK/ISSUE status visible on the map
+    const finishedZones = [...zones];
+
     setIsInspectionActive(false);
     setCurrentInspection(null);
     setIsFinishing(false);
 
-    // Full reload now that inspection is done
-    const [insRes, finRes, cfgRes2] = await Promise.all([
+    // Full reload
+    const [insRes, finRes] = await Promise.all([
       fetch("/api/inspections"),
       fetch("/api/findings"),
-      fetch("/api/config"),
     ]);
     const insData = await insRes.json();
     const finData = await finRes.json();
-    const cfgData2: Record<string, string> = cfgRes2.ok ? await cfgRes2.json() : {};
     const inspList = Array.isArray(insData) ? insData : [];
     setInspections(inspList);
     setAllFindings(Array.isArray(finData) ? finData : []);
-    // Restore zones from config (not from last inspection)
-    if (cfgData2.zones_config) {
-      try {
-        const saved: Zone[] = JSON.parse(cfgData2.zones_config);
-        if (Array.isArray(saved) && saved.length > 0) { setZones(saved); }
-        else setZones(INITIAL_ZONES);
-      } catch { setZones(INITIAL_ZONES); }
-    } else setZones(INITIAL_ZONES);
+    // Show the just-completed inspection zones with their OK/ISSUE colors
+    setZones(finishedZones);
 
-    setView("history");
+    setView("current");
   }
 
   async function handleCloseFinding(findingId: string, correctiveActions: string) {
@@ -598,14 +597,42 @@ export default function SegurMapApp() {
               </div>
             )}
 
-            {/* ── ÚLTIMA INSPECCIÓN EN PANTALLA PRINCIPAL ── */}
+            {/* ── STATS + ÚLTIMA INSPECCIÓN EN PANTALLA PRINCIPAL ── */}
             {!isInspectionActive && (() => {
               const lastCompleted = inspections.find((i: any) => !i.is_active);
               if (!lastCompleted) return null;
               const inspFindings = allFindings.filter(f => f.inspection_id === lastCompleted.id);
               const closedCount = inspFindings.filter(f => f.is_closed === true || (f as any).is_closed === "true").length;
               const openCount = inspFindings.filter(f => f.is_closed !== true && (f as any).is_closed !== "true").length;
+              const zonesEvaluated = lastCompleted.zones_data
+                ? (lastCompleted.zones_data as Zone[]).filter((z: Zone) => z.status !== "PENDING").length
+                : zones.filter(z => z.status !== "PENDING").length;
+              const totalZones = lastCompleted.zones_data
+                ? (lastCompleted.zones_data as Zone[]).length
+                : zones.length;
+              const issueZonesCount = lastCompleted.zones_data
+                ? (lastCompleted.zones_data as Zone[]).filter((z: Zone) => z.status === "ISSUE").length
+                : zones.filter(z => z.status === "ISSUE").length;
               return (
+                <>
+                {/* Stats bar */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex flex-col items-center justify-center text-center">
+                    <p className="text-2xl md:text-3xl font-black text-slate-800">{zonesEvaluated}<span className="text-slate-300">/{totalZones}</span></p>
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">Zonas<br/>Evaluadas</p>
+                  </div>
+                  <div className={`rounded-2xl border shadow-sm p-4 flex flex-col items-center justify-center text-center ${openCount > 0 ? "bg-red-50 border-red-100" : "bg-white border-slate-100"}`}>
+                    <p className={`text-2xl md:text-3xl font-black ${openCount > 0 ? "text-red-600" : "text-slate-800"}`}>{inspFindings.length}</p>
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">Hallazgos<br/>Totales</p>
+                  </div>
+                  <div className={`rounded-2xl border shadow-sm p-4 flex flex-col items-center justify-center text-center ${openCount > 0 ? "bg-orange-50 border-orange-100" : "bg-green-50 border-green-100"}`}>
+                    <p className={`text-2xl md:text-3xl font-black ${openCount > 0 ? "text-orange-600" : "text-green-600"}`}>{openCount > 0 ? openCount : closedCount}</p>
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1">{openCount > 0 ? "Pendientes
+de Cierre" : "Hallazgos
+Resueltos"}</p>
+                  </div>
+                </div>
+
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                   <div className="p-4 md:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-4">
@@ -684,6 +711,7 @@ export default function SegurMapApp() {
                     )}
                   </div>
                 </div>
+                </>
               );
             })()}
           </div>
