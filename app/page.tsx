@@ -450,6 +450,23 @@ export default function SegurMapApp() {
     }).catch(() => {});
   }
 
+  async function handleDeleteInspection(id: string) {
+    await fetch("/api/inspections", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    // Reload inspections and findings
+    const [insRes, finRes] = await Promise.all([
+      fetch("/api/inspections"),
+      fetch("/api/findings"),
+    ]);
+    const insData = await insRes.json();
+    const finData = await finRes.json();
+    setInspections(Array.isArray(insData) ? insData : []);
+    setAllFindings(Array.isArray(finData) ? finData : []);
+  }
+
   // Safe boolean check — Postgres returns actual booleans but just in case
   const activeFindings = allFindings.filter(f => f.is_closed !== true && (f as any).is_closed !== "true");
   const closedFindings = allFindings.filter(f => f.is_closed === true || (f as any).is_closed === "true");
@@ -956,8 +973,11 @@ export default function SegurMapApp() {
             inspectionCount={inspections.length}
             findingCount={allFindings.length}
             zones={zones}
+            inspections={inspections}
+            allFindings={allFindings}
             onZonesChange={handleZonesChange}
             onDeleteAll={handleDeleteAll}
+            onDeleteInspection={handleDeleteInspection}
           />
         )}
       </main>
@@ -1032,6 +1052,15 @@ export default function SegurMapApp() {
           </div>
         </div>
       )}
+      {/* ── Footer banner ── */}
+      <footer
+        className="w-full py-1.5 md:py-2 flex items-center justify-center"
+        style={{ backgroundColor: "#E40521" }}
+      >
+        <p className="text-white text-[9px] md:text-[10px] font-medium tracking-wide opacity-90">
+          Desarrollado por Juan José Amil
+        </p>
+      </footer>
     </div>
   );
 }
@@ -1486,13 +1515,16 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
 // All changes go directly through onZonesChange → handleZonesChange → DB.
 function ConfigPage({
   inspectionCount, findingCount, zones,
-  onZonesChange, onDeleteAll,
+  onZonesChange, onDeleteAll, inspections, allFindings, onDeleteInspection,
 }: {
   inspectionCount: number;
   findingCount: number;
   zones: Zone[];
   onZonesChange: (zones: Zone[]) => void;
   onDeleteAll: () => Promise<void>;
+  inspections: Inspection[];
+  allFindings: Finding[];
+  onDeleteInspection: (id: string) => Promise<void>;
 }) {
   const [newZoneName, setNewZoneName] = useState("");
   const [zoneToDelete, setZoneToDelete] = useState<Zone | null>(null);
@@ -1505,8 +1537,20 @@ function ConfigPage({
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSavingZones, setIsSavingZones] = useState(false);
   const [lastSaveStatus, setLastSaveStatus] = useState<"idle"|"saving"|"ok"|"error">("idle");
+  const [inspToDelete, setInspToDelete] = useState<Inspection | null>(null);
+  const [inspDeleteWord, setInspDeleteWord] = useState("");
+  const [isDeletingInsp, setIsDeletingInsp] = useState(false);
 
   const selectedZone = zones.find(z => z.id === selectedZoneId) ?? null;
+
+  const handleConfirmDeleteInspection = async () => {
+    if (!inspToDelete || inspDeleteWord !== "BORRAR") return;
+    setIsDeletingInsp(true);
+    await onDeleteInspection(inspToDelete.id);
+    setIsDeletingInsp(false);
+    setInspToDelete(null);
+    setInspDeleteWord("");
+  };
 
   // All zone mutations go through this single function
   const commitZones = async (updated: Zone[]) => {
@@ -1695,6 +1739,114 @@ function ConfigPage({
           </div>
         </div>
       </div>
+
+      {/* ── Auditorías Registradas ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex items-center gap-3">
+          <div className="w-8 h-8 bg-slate-100 rounded-xl flex items-center justify-center">
+            <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="font-black text-slate-800 text-sm">Auditorías Registradas</h3>
+            <p className="text-[9px] text-slate-400 font-bold uppercase">Eliminar auditorías individuales</p>
+          </div>
+        </div>
+        <div className="p-4">
+          {inspections.filter((i: any) => !i.is_active).length === 0 ? (
+            <p className="text-center text-slate-400 text-xs py-4 font-bold uppercase">Sin auditorías registradas</p>
+          ) : (
+            <div className="space-y-2">
+              {inspections.filter((i: any) => !i.is_active).map(insp => {
+                const inspFindings = allFindings.filter(f => f.inspection_id === insp.id);
+                const openCount = inspFindings.filter(f => f.is_closed !== true && (f as any).is_closed !== "true").length;
+                const closedCount = inspFindings.filter(f => f.is_closed === true || (f as any).is_closed === "true").length;
+                return (
+                  <div key={insp.id} className="flex items-center gap-3 px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl">
+                    {/* Fecha */}
+                    <div className="bg-slate-800 rounded-lg px-2 py-1 text-center shrink-0 min-w-[36px]">
+                      <p className="text-[7px] font-black text-slate-400 uppercase leading-none">
+                        {new Date(insp.created_at).toLocaleString("default", { month: "short" })}
+                      </p>
+                      <p className="text-sm font-black text-white leading-tight">{new Date(insp.created_at).getDate()}</p>
+                    </div>
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-black text-slate-800 text-xs truncate">{insp.title}</p>
+                      <p className="text-[9px] text-slate-400 font-bold uppercase truncate">{insp.inspector} · {insp.location}</p>
+                    </div>
+                    {/* Badges */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {openCount > 0 && (
+                        <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100">{openCount} ab.</span>
+                      )}
+                      {closedCount > 0 && (
+                        <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-100">{closedCount} ok</span>
+                      )}
+                      {inspFindings.length === 0 && (
+                        <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400">sin hall.</span>
+                      )}
+                    </div>
+                    {/* Botón eliminar */}
+                    <button
+                      onClick={() => { setInspToDelete(insp); setInspDeleteWord(""); }}
+                      className="shrink-0 w-7 h-7 bg-red-50 text-red-500 border border-red-100 rounded-lg flex items-center justify-center hover:bg-red-100 transition-all"
+                      title="Eliminar esta auditoría"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Modal confirmar borrar auditoría individual */}
+      {inspToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-red-200 overflow-hidden">
+            <div className="p-6 bg-red-600 text-white text-center">
+              <p className="text-4xl mb-2">🗑</p>
+              <h3 className="text-xl font-black">¿Eliminar auditoría?</h3>
+              <p className="text-red-100 text-sm mt-1 font-bold truncate px-4">"{inspToDelete.title}"</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-slate-500 text-center">
+                Se eliminarán todos los hallazgos e imágenes asociados a esta auditoría.
+              </p>
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 text-center">
+                  Escribe <span className="text-red-600 font-black">BORRAR</span> para confirmar
+                </label>
+                <input
+                  value={inspDeleteWord}
+                  onChange={e => setInspDeleteWord(e.target.value)}
+                  placeholder="BORRAR"
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none"
+                />
+              </div>
+            </div>
+            <div className="p-6 pt-0 flex gap-3">
+              <button
+                onClick={() => { setInspToDelete(null); setInspDeleteWord(""); }}
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500"
+              >CANCELAR</button>
+              <button
+                disabled={inspDeleteWord !== "BORRAR" || isDeletingInsp}
+                onClick={handleConfirmDeleteInspection}
+                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white ${inspDeleteWord === "BORRAR" && !isDeletingInsp ? "bg-red-600 hover:bg-red-700" : "bg-slate-300"}`}
+              >
+                {isDeletingInsp ? "ELIMINANDO..." : "ELIMINAR"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal borrar zona */}
       {zoneToDelete && (
