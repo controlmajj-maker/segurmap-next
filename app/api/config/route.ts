@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import pool from "../../../lib/db";
 
-// Simple, direct reads/writes to app_config table
-// Table schema: key TEXT PRIMARY KEY, value TEXT NOT NULL
+// Table: app_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)
 
 export async function GET() {
   try {
@@ -17,7 +16,7 @@ export async function GET() {
   }
 }
 
-export async function PUT(req: Request) {
+export async function POST(req: Request) {
   try {
     const body = await req.text();
     const incoming = JSON.parse(body) as Record<string, unknown>;
@@ -33,4 +32,8 @@ export async function PUT(req: Request) {
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
+}
+
+export async function PUT(req: Request) {
+  return POST(req);
 }
