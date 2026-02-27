@@ -1218,6 +1218,10 @@ export default function SegurMapApp() {
         <InspectionModal
           zone={selectedZone}
           inspectionId={currentInspection.id}
+          existingFindings={allFindings.filter(f =>
+            f.inspection_id === currentInspection.id &&
+            f.zone_id === selectedZone.id
+          )}
           onClose={() => setSelectedZone(null)}
           onSave={async (zoneId, zoneName, status, checklistResults, findings) => {
             await handleZoneSave(zoneId, zoneName, status, checklistResults, findings);
@@ -1375,9 +1379,10 @@ function NewInspectionModal({ onConfirm, onClose }: {
 }
 
 // ─── Inspection Modal ─────────────────────────────────────────────────────────
-function InspectionModal({ zone, inspectionId, onClose, onSave }: {
+function InspectionModal({ zone, inspectionId, existingFindings, onClose, onSave }: {
   zone: Zone;
   inspectionId: string;
+  existingFindings: Finding[];
   onClose: () => void;
   onSave: (zoneId: string, zoneName: string, status: ZoneStatus, checklistResults: Record<string, boolean>, findings: Record<string, Finding>) => Promise<void>;
 }) {
@@ -1388,6 +1393,7 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
   const [isSaving, setIsSaving] = useState(false);
   const [findingToDelete, setFindingToDelete] = useState<string | null>(null);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [viewFinding, setViewFinding] = useState<Finding | null>(null);
 
   useEffect(() => {
     if (Object.keys(results).length === 0) {
@@ -1397,7 +1403,7 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
     }
   }, []);
 
-  const hasAnyFail = Object.values(results).some(v => v === false) || Object.keys(findings).some(k => k.startsWith("manual_"));
+  const hasAnyFail = Object.values(results).some(v => v === false) || Object.keys(findings).some(k => k.startsWith("manual_")) || existingFindings.length > 0;
 
   const handleConfirm = async () => {
     setIsSaving(true);
@@ -1473,6 +1479,37 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
                 </div>
               ))
             }
+
+            {/* ── Hallazgos ya guardados (vienen de DB) ── */}
+            {existingFindings.length > 0 && (
+              <div className="mt-4">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                  Hallazgos guardados · {existingFindings.length}
+                </p>
+                <div className="space-y-1.5">
+                  {existingFindings.map(f => (
+                    <div
+                      key={f.id}
+                      onClick={() => setViewFinding(f)}
+                      className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 cursor-pointer hover:bg-slate-100 transition-all"
+                    >
+                      <span className="text-slate-400 text-sm">📋</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-black text-slate-700 truncate">{f.item_label}</p>
+                        <p className="text-[9px] text-slate-400 italic truncate">"{f.description}"</p>
+                      </div>
+                      <span className={`shrink-0 text-[7px] font-black uppercase px-1.5 py-0.5 rounded-full ${
+                        f.severity === "high" ? "bg-red-100 text-red-600" :
+                        f.severity === "medium" ? "bg-orange-100 text-orange-600" :
+                        "bg-yellow-100 text-yellow-600"
+                      }`}>
+                        {f.severity === "high" ? "ALTA" : f.severity === "medium" ? "MEDIA" : "BAJA"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1575,6 +1612,13 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
             </div>
           </div>
         </div>
+      )}
+
+      {viewFinding && (
+        <FindingViewModal
+          finding={viewFinding}
+          onClose={() => setViewFinding(null)}
+        />
       )}
     </div>
   );
