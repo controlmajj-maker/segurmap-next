@@ -785,12 +785,19 @@ export default function SegurMapApp() {
                         {zone.name}
                       </span>
 
-                      {/* Hallazgos registrados en esta zona */}
-                      {isISSUE && Object.keys(zone.findings || {}).length > 0 && (
-                        <span className="text-[9px] font-black text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">
-                          ⚠ {Object.keys(zone.findings).length}
-                        </span>
-                      )}
+                      {/* Hallazgos registrados en esta zona — usa allFindings para persistir tras recarga */}
+                      {isISSUE && (() => {
+                        const lastInsp = inspections.find((i: any) => !i.is_active);
+                        const count = allFindings.filter(f =>
+                          f.zone_id === zone.id &&
+                          (!lastInsp || f.inspection_id === lastInsp.id)
+                        ).length;
+                        return count > 0 ? (
+                          <span className="text-[9px] font-black text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">
+                            ⚠ {count}
+                          </span>
+                        ) : null;
+                      })()}
 
                       {/* Etiqueta de estado */}
                       <span className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full border ${badgeClass}`}>
@@ -1330,6 +1337,7 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
   const [itemToReport, setItemToReport] = useState<{ id: string; label: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [findingToDelete, setFindingToDelete] = useState<string | null>(null);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
   useEffect(() => {
     if (Object.keys(results).length === 0) {
@@ -1359,7 +1367,17 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
             </span>
             <h2 className="text-xl font-black text-slate-800 mt-1">{zone.name}</h2>
           </div>
-          <button onClick={onClose} className="w-9 h-9 bg-white border rounded-xl flex items-center justify-center text-slate-400">✕</button>
+          <button
+            onClick={() => {
+              const hasNewFindings = Object.keys(findings).some(k => k.startsWith("manual_") || k.startsWith("local_"));
+              if (hasNewFindings) {
+                setShowCloseConfirm(true);
+              } else {
+                onClose();
+              }
+            }}
+            className="w-9 h-9 bg-white border rounded-xl flex items-center justify-center text-slate-400"
+          >✕</button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 md:p-6">
@@ -1448,6 +1466,34 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
           }}
           onCancel={() => setItemToReport(null)}
         />
+      )}
+
+      {showCloseConfirm && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur flex items-center justify-center z-[200] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm border-4 border-orange-100 overflow-hidden">
+            <div className="p-5 bg-orange-50 border-b text-center">
+              <p className="text-2xl mb-1">⚠️</p>
+              <h3 className="text-base font-black text-slate-800">¿Cerrar sin guardar?</h3>
+              <p className="text-slate-500 text-xs mt-1 leading-relaxed">
+                Los hallazgos que agregaste en esta sesión <span className="font-black text-red-600">se perderán</span>. Para guardarlos, regresa y da clic en <span className="font-black text-slate-800">Validar Zona</span>.
+              </p>
+            </div>
+            <div className="p-4 flex gap-2">
+              <button
+                onClick={() => setShowCloseConfirm(false)}
+                className="flex-1 py-2.5 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50 transition-all"
+              >
+                CANCELAR
+              </button>
+              <button
+                onClick={() => { setShowCloseConfirm(false); onClose(); }}
+                className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 transition-all shadow"
+              >
+                CERRAR SIN GUARDAR
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {findingToDelete && (
