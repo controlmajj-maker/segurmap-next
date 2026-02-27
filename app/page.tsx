@@ -785,10 +785,11 @@ export default function SegurMapApp() {
                 const totalAbiertos = totalHallazgos - totalResueltos;
 
                 return (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                    {/* Gauge evaluación */}
-                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 flex flex-col items-center justify-center col-span-2 md:col-span-1">
-                      <svg width="72" height="72" viewBox="0 0 72 72">
+                  // Móvil: fila horizontal compacta. Desktop: grid 4 columnas normal
+                  <div className="flex md:grid md:grid-cols-4 gap-2 md:gap-3 mb-4">
+                    {/* Gauge evaluación — móvil compacto, desktop normal */}
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-2 md:p-3 flex flex-row md:flex-col items-center justify-center gap-2 md:gap-0 flex-1 md:col-span-1">
+                      <svg width="44" height="44" className="md:w-[72px] md:h-[72px] shrink-0" viewBox="0 0 72 72">
                         <circle cx={cx} cy={cy} r={r} fill="none" stroke="#f1f5f9" strokeWidth="7" />
                         <circle
                           cx={cx} cy={cy} r={r}
@@ -804,33 +805,33 @@ export default function SegurMapApp() {
                         <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle"
                           fontSize="13" fontWeight="900" fill="#1e293b">{pct}%</text>
                       </svg>
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1 text-center leading-tight">
-                        Evaluación<br/>
+                      <p className="text-[7px] md:text-[8px] font-black text-slate-400 uppercase tracking-widest md:mt-1 text-center leading-tight">
+                        <span className="hidden md:inline">Evaluación<br/></span>
                         <span className="text-slate-600">{evalLabel}</span>
                       </p>
                     </div>
 
                     {/* Total auditorías */}
-                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 flex flex-col items-center justify-center text-center">
-                      <p className="text-3xl font-black text-slate-800 leading-none">{totalAuditorias}</p>
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-2 leading-tight">
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-2 md:p-3 flex flex-col items-center justify-center text-center flex-1">
+                      <p className="text-xl md:text-3xl font-black text-slate-800 leading-none">{totalAuditorias}</p>
+                      <p className="text-[7px] md:text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1 md:mt-2 leading-tight">
                         Auditorías<br/>totales
                       </p>
                     </div>
 
                     {/* Total hallazgos abiertos */}
-                    <div className={`rounded-2xl border shadow-sm p-3 flex flex-col items-center justify-center text-center ${totalAbiertos > 0 ? "bg-red-50 border-red-100" : "bg-white border-slate-100"}`}>
-                      <p className={`text-3xl font-black leading-none ${totalAbiertos > 0 ? "text-red-600" : "text-slate-800"}`}>{totalAbiertos}</p>
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-2 leading-tight">
-                        Hallazgos<br/>abiertos
+                    <div className={`rounded-2xl border shadow-sm p-2 md:p-3 flex flex-col items-center justify-center text-center flex-1 ${totalAbiertos > 0 ? "bg-red-50 border-red-100" : "bg-white border-slate-100"}`}>
+                      <p className={`text-xl md:text-3xl font-black leading-none ${totalAbiertos > 0 ? "text-red-600" : "text-slate-800"}`}>{totalAbiertos}</p>
+                      <p className="text-[7px] md:text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1 md:mt-2 leading-tight">
+                        Hall.<br/>abiertos
                       </p>
                     </div>
 
                     {/* Total hallazgos resueltos */}
-                    <div className={`rounded-2xl border shadow-sm p-3 flex flex-col items-center justify-center text-center ${totalResueltos > 0 ? "bg-green-50 border-green-100" : "bg-white border-slate-100"}`}>
-                      <p className={`text-3xl font-black leading-none ${totalResueltos > 0 ? "text-green-600" : "text-slate-800"}`}>{totalResueltos}</p>
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-2 leading-tight">
-                        Hallazgos<br/>resueltos
+                    <div className={`rounded-2xl border shadow-sm p-2 md:p-3 flex flex-col items-center justify-center text-center flex-1 ${totalResueltos > 0 ? "bg-green-50 border-green-100" : "bg-white border-slate-100"}`}>
+                      <p className={`text-xl md:text-3xl font-black leading-none ${totalResueltos > 0 ? "text-green-600" : "text-slate-800"}`}>{totalResueltos}</p>
+                      <p className="text-[7px] md:text-[8px] font-black text-slate-400 uppercase tracking-widest mt-1 md:mt-2 leading-tight">
+                        Hall.<br/>resueltos
                       </p>
                     </div>
                   </div>
@@ -907,7 +908,11 @@ export default function SegurMapApp() {
                       const isExpanded = !expandedSectionIds.has(sec.id);
                       const hasIssue   = secZones.some(z => z.status === "ISSUE");
                       const allOk      = secZones.length > 0 && secZones.every(z => z.status === "OK");
-                      const issueCount = secZones.filter(z => z.status === "ISSUE").length;
+                      // Total de hallazgos reales en toda la sección (no solo zonas con issue)
+                      const inspId = isInspectionActive ? currentInspection?.id : inspections.find((i: any) => !i.is_active)?.id;
+                      const issueCount = inspId
+                        ? allFindings.filter(f => f.inspection_id === inspId && secZones.some(z => z.id === f.zone_id)).length
+                        : 0;
                       const evaluatedCount = secZones.filter(z => z.status !== "PENDING").length;
                       const totalCount     = secZones.length;
                       return (
@@ -921,7 +926,7 @@ export default function SegurMapApp() {
                             <div className="flex items-center gap-1.5 shrink-0">
                               {issueCount > 0 && <span className="text-[8px] font-black text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">⚠ {issueCount}</span>}
                               {allOk && <span className="text-[8px] font-black text-green-600 bg-green-100 border border-green-200 px-2 py-0.5 rounded-full">✓ OK</span>}
-                              <span className="text-[8px] font-black text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-full ml-1">{evaluatedCount}/{totalCount} eval.</span>
+                              <span className="text-xs font-black text-slate-600 bg-white border border-slate-200 px-2.5 py-1 rounded-full ml-1">{evaluatedCount}/{totalCount} evaluadas</span>
                               <svg className={`w-4 h-4 text-slate-400 transition-transform ml-1 ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                               </svg>
@@ -1124,51 +1129,120 @@ export default function SegurMapApp() {
                 <p className="text-4xl mb-3">✅</p>
                 <p className="text-slate-400 font-black uppercase tracking-widest text-sm">¡Sin hallazgos activos!</p>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                {activeFindings.map(f => (
-                  <div key={f.id} className="bg-white rounded-2xl shadow-lg border border-slate-100 overflow-hidden flex flex-col">
-                    <div className="p-4 bg-red-50 border-b border-red-100">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full text-white ${
-                          f.severity === "high" ? "bg-red-600" : f.severity === "medium" ? "bg-orange-500" : "bg-yellow-500"
-                        }`}>{f.severity === "high" ? "ALTA" : f.severity === "medium" ? "MEDIA" : "BAJA"}</span>
-                        {f.zone_name && (
-                          <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-700 text-white">
-                            📍 {f.zone_name}
-                          </span>
-                        )}
-                        <span className="text-[9px] text-slate-400 font-bold ml-auto">{new Date(f.created_at).toLocaleDateString()}</span>
-                      </div>
-                      <h4 className="font-black text-slate-800 text-sm leading-tight">{f.item_label}</h4>
+            ) : (() => {
+              // Tarjeta de hallazgo individual (sin cambios de diseño)
+              const renderFindingCard = (f: Finding) => (
+                <div key={f.id} className="bg-white rounded-2xl shadow-lg border border-slate-100 overflow-hidden flex flex-col">
+                  <div className="p-4 bg-red-50 border-b border-red-100">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full text-white ${
+                        f.severity === "high" ? "bg-red-600" : f.severity === "medium" ? "bg-orange-500" : "bg-yellow-500"
+                      }`}>{f.severity === "high" ? "ALTA" : f.severity === "medium" ? "MEDIA" : "BAJA"}</span>
+                      {f.zone_name && (
+                        <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-700 text-white">
+                          📍 {f.zone_name}
+                        </span>
+                      )}
+                      <span className="text-[9px] text-slate-400 font-bold ml-auto">{new Date(f.created_at).toLocaleDateString()}</span>
                     </div>
-                    {f.photo_url && (
-                      <div className="cursor-zoom-in" onClick={() => setZoomImage(f.photo_url!)}>
-                        <img src={f.photo_url} className="w-full h-36 object-cover border-b" alt="Evidencia" />
+                    <h4 className="font-black text-slate-800 text-sm leading-tight">{f.item_label}</h4>
+                  </div>
+                  {f.photo_url && (
+                    <div className="cursor-zoom-in" onClick={() => setZoomImage(f.photo_url!)}>
+                      <img src={f.photo_url} className="w-full h-36 object-cover border-b" alt="Evidencia" />
+                    </div>
+                  )}
+                  <div className="p-4 flex-1">
+                    <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Observación:</p>
+                    <p className="text-xs text-slate-600 italic">"{f.description}"</p>
+                    {f.ai_analysis && (
+                      <div className="mt-3 bg-slate-800 rounded-lg p-2">
+                        <p className="text-[8px] font-black text-blue-400 uppercase mb-0.5">Recomendación IA:</p>
+                        <p className="text-[9px] text-slate-300 leading-relaxed">{f.ai_analysis}</p>
                       </div>
                     )}
-                    <div className="p-4 flex-1">
-                      <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Observación:</p>
-                      <p className="text-xs text-slate-600 italic">"{f.description}"</p>
-                      {f.ai_analysis && (
-                        <div className="mt-3 bg-slate-800 rounded-lg p-2">
-                          <p className="text-[8px] font-black text-blue-400 uppercase mb-0.5">Recomendación IA:</p>
-                          <p className="text-[9px] text-slate-300 leading-relaxed">{f.ai_analysis}</p>
-                        </div>
-                      )}
-                    </div>
-                    <div className="p-4 pt-0">
-                      <button
-                        onClick={() => setClosureTarget(f)}
-                        className="w-full py-3 bg-green-600 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow hover:bg-green-700 transition-all"
-                      >
-                        EJECUTAR CIERRE
-                      </button>
-                    </div>
                   </div>
-                ))}
-              </div>
-            )}
+                  <div className="p-4 pt-0">
+                    <button
+                      onClick={() => setClosureTarget(f)}
+                      className="w-full py-3 bg-green-600 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow hover:bg-green-700 transition-all"
+                    >
+                      EJECUTAR CIERRE
+                    </button>
+                  </div>
+                </div>
+              );
+
+              // Agrupar por fecha (más reciente primero)
+              const byDate = new Map<string, Finding[]>();
+              const sortedFindings = [...activeFindings].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+              for (const f of sortedFindings) {
+                const dateKey = new Date(f.created_at).toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+                if (!byDate.has(dateKey)) byDate.set(dateKey, []);
+                byDate.get(dateKey)!.push(f);
+              }
+
+              return (
+                <div className="space-y-6">
+                  {Array.from(byDate.entries()).map(([dateLabel, datefindings]) => {
+                    // Dentro de cada fecha, agrupar por sección > zona
+                    const bySec = new Map<string, { secName: string; byZone: Map<string, { zoneName: string; findings: Finding[] }> }>();
+
+                    for (const f of datefindings) {
+                      // Encontrar la sección que contiene esta zona
+                      const sec = sections.find(s => s.zoneIds.includes(f.zone_id || ""));
+                      const secKey  = sec?.id || "__sin_seccion__";
+                      const secName = sec?.name || "Sin sección";
+                      const zoneKey  = f.zone_id || "__sin_zona__";
+                      const zoneName = f.zone_name || "Sin zona";
+
+                      if (!bySec.has(secKey)) bySec.set(secKey, { secName, byZone: new Map() });
+                      const secEntry = bySec.get(secKey)!;
+                      if (!secEntry.byZone.has(zoneKey)) secEntry.byZone.set(zoneKey, { zoneName, findings: [] });
+                      secEntry.byZone.get(zoneKey)!.findings.push(f);
+                    }
+
+                    return (
+                      <div key={dateLabel} className="space-y-4">
+                        {/* Cabecera de fecha */}
+                        <div className="flex items-center gap-3">
+                          <div className="h-px flex-1 bg-slate-200" />
+                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-3 py-1 bg-slate-100 rounded-full border border-slate-200">
+                            📅 {dateLabel}
+                          </span>
+                          <div className="h-px flex-1 bg-slate-200" />
+                        </div>
+
+                        {/* Por sección */}
+                        {Array.from(bySec.entries()).map(([secKey, { secName, byZone }]) => (
+                          <div key={secKey} className="space-y-3">
+                            {/* Cabecera de sección */}
+                            <div className="flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" />
+                              <span className="text-xs font-black text-indigo-700 uppercase tracking-wide">{secName}</span>
+                              <div className="h-px flex-1 bg-indigo-100" />
+                            </div>
+
+                            {/* Por zona */}
+                            {Array.from(byZone.entries()).map(([zoneKey, { zoneName, findings: zoneFindings }]) => (
+                              <div key={zoneKey} className="space-y-3">
+                                {/* Cabecera de zona */}
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-4">
+                                  📍 {zoneName} <span className="text-slate-300">·</span> {zoneFindings.length} hallazgo{zoneFindings.length !== 1 ? "s" : ""}
+                                </p>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                                  {zoneFindings.map(f => renderFindingCard(f))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         )}
 
