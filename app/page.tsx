@@ -35,6 +35,12 @@ interface Zone {
   findings: Record<string, Finding>;
 }
 
+interface Module {
+  id: string;
+  name: string;
+  zoneIds: string[];
+}
+
 interface Inspection {
   id: string;
   title: string;
@@ -134,6 +140,28 @@ export default function SegurMapApp() {
   const [configPassword, setConfigPassword] = useState("");
   const [configPasswordError, setConfigPasswordError] = useState(false);
   const [configUnlocked, setConfigUnlocked] = useState(false);
+  const [modules, setModules] = useState<Module[]>(() => {
+    try {
+      const saved = typeof window !== "undefined" ? localStorage.getItem("maq_modules") : null;
+      if (saved) return JSON.parse(saved) as Module[];
+    } catch {}
+    return [];
+  });
+  const [expandedModuleIds, setExpandedModuleIds] = useState<Set<string>>(new Set());
+
+  const saveModules = (updated: Module[]) => {
+    setModules(updated);
+    try { if (typeof window !== "undefined") localStorage.setItem("maq_modules", JSON.stringify(updated)); } catch {}
+  };
+
+  const toggleModule = (moduleId: string) => {
+    setExpandedModuleIds(prev => {
+      const next = new Set(prev);
+      if (next.has(moduleId)) next.delete(moduleId);
+      else next.add(moduleId);
+      return next;
+    });
+  };
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -801,91 +829,120 @@ export default function SegurMapApp() {
                 );
               })()}
 
-              {/* ── Lista vertical de zonas ── */}
-              <div className="space-y-2">
-                {zones.map((zone, idx) => {
+              {/* ── Lista de zonas agrupada por módulos ── */}
+              {(() => {
+                // Zonas sin módulo asignado
+                const assignedZoneIds = new Set(modules.flatMap(m => m.zoneIds));
+                const unassignedZones = zones.filter(z => !assignedZoneIds.has(z.id));
+
+                const renderZoneRow = (zone: Zone, idx: number) => {
                   const isOK    = zone.status === "OK";
                   const isISSUE = zone.status === "ISSUE";
-                  const isPENDING = zone.status === "PENDING";
                   const isClickable = isInspectionActive;
-
-                  // Colores y estilos por estado
-                  const dotClass    = isOK ? "bg-green-400" : isISSUE ? "bg-red-500" : isInspectionActive ? "bg-slate-400" : "bg-slate-300";
-                  const dotAnim     = isISSUE ? "animate-pulse" : "";
-                  const badgeClass  = isOK    ? "bg-green-500/10 text-green-600 border-green-200" :
-                                      isISSUE ? "bg-red-500/10 text-red-600 border-red-200" :
-                                                "bg-slate-100 text-slate-400 border-slate-200";
-                  const rowClass    = isInspectionActive
+                  const dotClass   = isOK ? "bg-green-400" : isISSUE ? "bg-red-500" : isInspectionActive ? "bg-slate-400" : "bg-slate-300";
+                  const dotAnim    = isISSUE ? "animate-pulse" : "";
+                  const badgeClass = isOK    ? "bg-green-500/10 text-green-600 border-green-200" :
+                                     isISSUE ? "bg-red-500/10 text-red-600 border-red-200" :
+                                               "bg-slate-100 text-slate-400 border-slate-200";
+                  const rowClass   = isInspectionActive
                     ? isOK    ? "bg-green-50/40 border-green-200 hover:border-green-400 hover:bg-green-50/70"
                     : isISSUE ? "bg-red-50/40 border-red-200 hover:border-red-400 hover:bg-red-50/70"
                     :           "bg-white border-slate-200 hover:border-blue-400 hover:bg-blue-50/30"
                     : isOK    ? "bg-green-50/40 border-green-100"
                     : isISSUE ? "bg-red-50/40 border-red-100"
                     :           "bg-white border-slate-100";
-                  const nameClass   = isInspectionActive ? "text-slate-800" : "text-slate-800";
-                  const arrowClass  = isInspectionActive ? "text-slate-300" : "text-slate-200";
-
                   return (
                     <button
                       key={zone.id}
                       disabled={!isClickable}
                       onClick={() => isClickable && setSelectedZone(zone)}
                       style={{ animationDelay: `${idx * 60}ms` }}
-                      className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl border transition-all duration-200 text-left
-                        ${rowClass}
-                        ${isClickable ? "cursor-pointer active:scale-[0.98] hover:shadow-md" : "cursor-default"}
-                        shadow-sm`}
+                      className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl border transition-all duration-200 text-left ${rowClass} ${isClickable ? "cursor-pointer active:scale-[0.98] hover:shadow-md" : "cursor-default"} shadow-sm`}
                     >
-                      {/* Indicador circular de estado */}
                       <span className="relative shrink-0 flex items-center justify-center w-8 h-8">
                         <span className={`w-3 h-3 rounded-full ${dotClass} ${dotAnim}`} />
-                        {isISSUE && (
-                          <span className="absolute inset-0 rounded-full bg-red-500/20 animate-ping" style={{animationDuration:"2s"}} />
-                        )}
-                        {isOK && isInspectionActive && (
-                          <span className="absolute inset-0 rounded-full bg-green-400/10" />
-                        )}
+                        {isISSUE && <span className="absolute inset-0 rounded-full bg-red-500/20 animate-ping" style={{animationDuration:"2s"}} />}
+                        {isOK && isInspectionActive && <span className="absolute inset-0 rounded-full bg-green-400/10" />}
                       </span>
-
-                      {/* Nombre de la zona */}
-                      <span className={`flex-1 font-black text-sm md:text-base tracking-tight ${nameClass}`}>
-                        {zone.name}
-                      </span>
-
-                      {/* Hallazgos registrados en esta zona */}
+                      <span className="flex-1 font-black text-sm md:text-base tracking-tight text-slate-800">{zone.name}</span>
                       {isISSUE && (() => {
-                        // Durante inspección activa: contar hallazgos de esta inspección y zona
-                        // Sin inspección activa: contar hallazgos de la última completada
-                        const inspId = isInspectionActive
-                          ? currentInspection?.id
-                          : inspections.find((i: any) => !i.is_active)?.id;
+                        const inspId = isInspectionActive ? currentInspection?.id : inspections.find((i: any) => !i.is_active)?.id;
                         if (!inspId) return null;
-                        const count = allFindings.filter(f =>
-                          f.inspection_id === inspId &&
-                          f.zone_id === zone.id
-                        ).length;
+                        const count = allFindings.filter(f => f.inspection_id === inspId && f.zone_id === zone.id).length;
                         return count > 0 ? (
-                          <span className="text-[9px] font-black text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">
-                            ⚠ {count}
-                          </span>
+                          <span className="text-[9px] font-black text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">⚠ {count}</span>
                         ) : null;
                       })()}
-
-                      {/* Etiqueta de estado */}
                       <span className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full border ${badgeClass}`}>
                         {isOK ? "✓ OK" : isISSUE ? "ISSUE" : "PENDIENTE"}
                       </span>
-
-                      {/* Flecha — solo durante inspección */}
                       {isClickable && (
-                        <svg className={`w-4 h-4 shrink-0 transition-transform group-hover:translate-x-0.5 ${arrowClass}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-4 h-4 shrink-0 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
                       )}
                     </button>
                   );
-                })}
-              </div>
+                };
+
+                return (
+                  <div className="space-y-3">
+                    {modules.length === 0 && unassignedZones.length > 0 && (
+                      <div className="space-y-2">
+                        {unassignedZones.map((zone, idx) => renderZoneRow(zone, idx))}
+                      </div>
+                    )}
+                    {modules.map(mod => {
+                      const modZones = mod.zoneIds.map(id => zones.find(z => z.id === id)).filter(Boolean) as Zone[];
+                      const isExpanded = expandedModuleIds.has(mod.id);
+                      const hasIssue = modZones.some(z => z.status === "ISSUE");
+                      const allOk = modZones.length > 0 && modZones.every(z => z.status === "OK");
+                      const pendingCount = modZones.filter(z => z.status === "PENDING").length;
+                      const issueCount = modZones.filter(z => z.status === "ISSUE").length;
+                      return (
+                        <div key={mod.id} className={`rounded-2xl border-2 overflow-hidden transition-all ${hasIssue ? "border-red-200" : allOk ? "border-green-200" : "border-slate-200"}`}>
+                          <button
+                            onClick={() => toggleModule(mod.id)}
+                            className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-all ${hasIssue ? "bg-red-50/60" : allOk ? "bg-green-50/60" : "bg-slate-50"}`}
+                          >
+                            <div className={`w-2 h-2 rounded-full shrink-0 ${hasIssue ? "bg-red-500 animate-pulse" : allOk ? "bg-green-500" : "bg-slate-300"}`} />
+                            <span className="flex-1 font-black text-sm text-slate-800 tracking-tight">{mod.name}</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {issueCount > 0 && <span className="text-[8px] font-black text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">⚠ {issueCount}</span>}
+                              {pendingCount > 0 && isInspectionActive && <span className="text-[8px] font-black text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">{pendingCount} pend.</span>}
+                              {allOk && <span className="text-[8px] font-black text-green-600 bg-green-100 border border-green-200 px-2 py-0.5 rounded-full">✓ OK</span>}
+                              <span className="text-[8px] font-black text-slate-400 bg-white border border-slate-200 px-2 py-0.5 rounded-full ml-1">{modZones.length} zonas</span>
+                              <svg className={`w-4 h-4 text-slate-400 transition-transform ml-1 ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </div>
+                          </button>
+                          {isExpanded && (
+                            <div className="px-3 pb-3 pt-1 space-y-2 bg-white">
+                              {modZones.length === 0
+                                ? <p className="text-xs text-slate-400 text-center py-3 font-bold uppercase">Sin zonas asignadas</p>
+                                : modZones.map((zone, idx) => renderZoneRow(zone, idx))
+                              }
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {modules.length > 0 && unassignedZones.length > 0 && (
+                      <div className="rounded-2xl border-2 border-dashed border-slate-200 overflow-hidden">
+                        <div className="px-4 py-3 bg-slate-50 flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
+                          <span className="flex-1 font-black text-sm text-slate-500 tracking-tight">Sin módulo asignado</span>
+                          <span className="text-[8px] font-black text-slate-400 bg-white border border-slate-200 px-2 py-0.5 rounded-full">{unassignedZones.length} zonas</span>
+                        </div>
+                        <div className="px-3 pb-3 pt-1 space-y-2 bg-white">
+                          {unassignedZones.map((zone, idx) => renderZoneRow(zone, idx))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {(() => {
@@ -1236,6 +1293,8 @@ export default function SegurMapApp() {
             onZonesChange={handleZonesChange}
             onDeleteAll={handleDeleteAll}
             onDeleteInspection={handleDeleteInspection}
+            modules={modules}
+            onModulesChange={saveModules}
           />
         )}
       </main>
@@ -1992,6 +2051,7 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
 function ConfigPage({
   inspectionCount, findingCount, zones,
   onZonesChange, onDeleteAll, inspections, allFindings, onDeleteInspection,
+  modules, onModulesChange,
 }: {
   inspectionCount: number;
   findingCount: number;
@@ -2001,6 +2061,8 @@ function ConfigPage({
   inspections: Inspection[];
   allFindings: Finding[];
   onDeleteInspection: (id: string) => Promise<void>;
+  modules: Module[];
+  onModulesChange: (modules: Module[]) => void;
 }) {
   const [newZoneName, setNewZoneName] = useState("");
   const [zoneToDelete, setZoneToDelete] = useState<Zone | null>(null);
@@ -2016,8 +2078,59 @@ function ConfigPage({
   const [inspToDelete, setInspToDelete] = useState<Inspection | null>(null);
   const [inspDeleteWord, setInspDeleteWord] = useState("");
   const [isDeletingInsp, setIsDeletingInsp] = useState(false);
+  // ── Módulos state ──
+  const [newModuleName, setNewModuleName] = useState("");
+  const [editingModuleId, setEditingModuleId] = useState<string | null>(null);
+  const [editingModuleName, setEditingModuleName] = useState("");
+  const [moduleToDelete, setModuleToDelete] = useState<Module | null>(null);
+  const [expandedModuleCfgIds, setExpandedModuleCfgIds] = useState<Set<string>>(new Set());
+  const [moduleToAssign, setModuleToAssign] = useState<Module | null>(null);
 
   const selectedZone = zones.find(z => z.id === selectedZoneId) ?? null;
+
+  const toggleModuleCfg = (id: string) => {
+    setExpandedModuleCfgIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleAddModule = () => {
+    if (!newModuleName.trim()) return;
+    const mod: Module = { id: `m${Date.now()}`, name: newModuleName.trim(), zoneIds: [] };
+    onModulesChange([...modules, mod]);
+    setNewModuleName("");
+    setExpandedModuleCfgIds(prev => new Set([...prev, mod.id]));
+  };
+
+  const handleSaveModuleName = (modId: string) => {
+    if (!editingModuleName.trim()) return;
+    onModulesChange(modules.map(m => m.id === modId ? { ...m, name: editingModuleName.trim() } : m));
+    setEditingModuleId(null);
+    setEditingModuleName("");
+  };
+
+  const handleDeleteModule = (mod: Module) => {
+    onModulesChange(modules.filter(m => m.id !== mod.id));
+    setModuleToDelete(null);
+  };
+
+  const handleAssignZone = (modId: string, zoneId: string) => {
+    // Remove from any other module first, then add to this one
+    const updated = modules.map(m => ({
+      ...m,
+      zoneIds: m.id === modId
+        ? m.zoneIds.includes(zoneId) ? m.zoneIds : [...m.zoneIds, zoneId]
+        : m.zoneIds.filter(id => id !== zoneId),
+    }));
+    onModulesChange(updated);
+  };
+
+  const handleRemoveZoneFromModule = (modId: string, zoneId: string) => {
+    onModulesChange(modules.map(m => m.id === modId ? { ...m, zoneIds: m.zoneIds.filter(id => id !== zoneId) } : m));
+  };
 
   const handleConfirmDeleteInspection = async () => {
     if (!inspToDelete || inspDeleteWord !== "BORRAR") return;
@@ -2116,6 +2229,170 @@ function ConfigPage({
         </div>
       </div>
 
+      {/* ── Módulos ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex items-center gap-3">
+          <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center">
+            <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="font-black text-slate-800 text-sm">Módulos</h3>
+            <p className="text-[9px] text-slate-400 font-bold uppercase">Crear · renombrar · eliminar · asignar zonas</p>
+          </div>
+        </div>
+        <div className="p-4 space-y-3">
+          {/* Crear módulo */}
+          <div className="flex gap-2">
+            <input
+              value={newModuleName}
+              onChange={e => setNewModuleName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleAddModule()}
+              placeholder="Nombre del nuevo módulo..."
+              className="flex-1 px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-medium focus:border-indigo-500 outline-none transition-all"
+            />
+            <button
+              onClick={handleAddModule}
+              disabled={!newModuleName.trim()}
+              className={`px-3 py-2 rounded-xl font-black text-xs uppercase transition-all ${newModuleName.trim() ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow" : "bg-slate-100 text-slate-300"}`}
+            >
+              + ADD
+            </button>
+          </div>
+
+          {modules.length === 0 && (
+            <p className="text-center text-slate-400 text-xs py-3 font-bold uppercase">Sin módulos creados. Agrega el primero.</p>
+          )}
+
+          <div className="space-y-2">
+            {modules.map(mod => {
+              const isExpanded = expandedModuleCfgIds.has(mod.id);
+              const isEditing = editingModuleId === mod.id;
+              const modZones = mod.zoneIds.map(id => zones.find(z => z.id === id)).filter(Boolean) as Zone[];
+              const assignedIds = new Set(modules.flatMap(m => m.zoneIds));
+              const availableZones = zones.filter(z => !assignedIds.has(z.id));
+              return (
+                <div key={mod.id} className="border-2 border-slate-100 rounded-xl overflow-hidden">
+                  {/* Cabecera del módulo */}
+                  <div
+                    className="flex items-center justify-between px-3 py-2 bg-indigo-50/60 cursor-pointer hover:bg-indigo-50"
+                    onClick={() => !isEditing && toggleModuleCfg(mod.id)}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 shrink-0" />
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          value={editingModuleName}
+                          onChange={e => setEditingModuleName(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") handleSaveModuleName(mod.id); if (e.key === "Escape") setEditingModuleId(null); }}
+                          onClick={e => e.stopPropagation()}
+                          className="flex-1 px-2 py-0.5 text-xs font-black bg-white border-2 border-indigo-400 rounded-lg outline-none min-w-0"
+                        />
+                      ) : (
+                        <span className="font-black text-slate-800 text-xs truncate">{mod.name}</span>
+                      )}
+                      <span className="text-[7px] bg-indigo-100 text-indigo-500 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0">{mod.zoneIds.length} zonas</span>
+                    </div>
+                    <div className="flex items-center gap-1 ml-2 shrink-0" onClick={e => e.stopPropagation()}>
+                      {isEditing ? (
+                        <>
+                          <button onClick={() => handleSaveModuleName(mod.id)} className="px-2 h-6 bg-green-600 text-white rounded-md font-black text-[8px] hover:bg-green-700">✓</button>
+                          <button onClick={() => setEditingModuleId(null)} className="px-2 h-6 bg-slate-200 text-slate-600 rounded-md font-black text-[8px]">✕</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => { setEditingModuleId(mod.id); setEditingModuleName(mod.name); }} className="w-6 h-6 bg-blue-50 text-blue-500 rounded-md flex items-center justify-center hover:bg-blue-100" title="Renombrar">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          </button>
+                          <button onClick={() => setModuleToDelete(mod)} className="w-6 h-6 bg-red-50 text-red-500 rounded-md flex items-center justify-center text-[10px] hover:bg-red-100 font-black">✕</button>
+                          <svg className={`w-4 h-4 text-slate-400 transition-transform ml-1 ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Contenido expandido */}
+                  {isExpanded && (
+                    <div className="px-3 pb-3 pt-2 bg-white space-y-2">
+                      {/* Zonas asignadas */}
+                      {modZones.length === 0
+                        ? <p className="text-xs text-slate-400 text-center py-2 font-bold uppercase">Sin zonas asignadas</p>
+                        : modZones.map(z => (
+                          <div key={z.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded-lg">
+                            <div className={`w-2 h-2 rounded-full shrink-0 ${z.status === "OK" ? "bg-green-500" : z.status === "ISSUE" ? "bg-red-500" : "bg-slate-300"}`} />
+                            <span className="flex-1 font-black text-xs text-slate-700 truncate">{z.name}</span>
+                            <span className="text-[7px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full font-black uppercase">{z.status}</span>
+                            <button
+                              onClick={() => handleRemoveZoneFromModule(mod.id, z.id)}
+                              className="w-5 h-5 bg-red-50 text-red-400 rounded flex items-center justify-center text-[9px] hover:bg-red-100 font-black shrink-0"
+                              title="Quitar del módulo"
+                            >✕</button>
+                          </div>
+                        ))
+                      }
+                      {/* Botón agregar zona */}
+                      {availableZones.length > 0 && (
+                        <div className="relative">
+                          <button
+                            onClick={() => setModuleToAssign(moduleToAssign?.id === mod.id ? null : mod)}
+                            className="w-full flex items-center justify-center gap-1.5 py-2 border-2 border-dashed border-indigo-200 rounded-lg text-indigo-500 hover:border-indigo-400 hover:bg-indigo-50 transition-all text-[10px] font-black uppercase"
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                            </svg>
+                            Agregar zona
+                          </button>
+                          {moduleToAssign?.id === mod.id && (
+                            <div className="mt-1.5 bg-white border-2 border-indigo-200 rounded-xl overflow-hidden shadow-lg z-10">
+                              {availableZones.map(z => (
+                                <button
+                                  key={z.id}
+                                  onClick={() => { handleAssignZone(mod.id, z.id); setModuleToAssign(null); }}
+                                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-indigo-50 transition-all text-left border-b border-slate-50 last:border-0"
+                                >
+                                  <div className={`w-2 h-2 rounded-full shrink-0 ${z.status === "OK" ? "bg-green-500" : z.status === "ISSUE" ? "bg-red-500" : "bg-slate-300"}`} />
+                                  <span className="text-xs font-black text-slate-700">{z.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Modal eliminar módulo */}
+      {moduleToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xs border-4 border-red-200 overflow-hidden">
+            <div className="p-5 bg-red-600 text-white text-center">
+              <p className="text-3xl mb-1">⚠️</p>
+              <h3 className="text-lg font-black">¿Eliminar módulo?</h3>
+              <p className="text-red-100 text-xs mt-1 font-bold">"{moduleToDelete.name}"</p>
+            </div>
+            <div className="p-4 text-center">
+              <p className="text-xs text-slate-500">Las zonas asignadas no se eliminarán, solo se desagruparán.</p>
+            </div>
+            <div className="px-4 pb-4 flex gap-2">
+              <button onClick={() => setModuleToDelete(null)} className="flex-1 py-2.5 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500">CANCELAR</button>
+              <button onClick={() => handleDeleteModule(moduleToDelete)} className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 shadow">ELIMINAR</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Zonas de Inspección ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
@@ -2126,10 +2403,11 @@ function ConfigPage({
           </div>
           <div>
             <h3 className="font-black text-slate-800 text-sm">Zonas de Inspección</h3>
-            <p className="text-[9px] text-slate-400 font-bold uppercase">Crear · renombrar · eliminar</p>
+            <p className="text-[9px] text-slate-400 font-bold uppercase">Crear · renombrar · eliminar · agrupadas por módulo</p>
           </div>
         </div>
         <div className="p-4 space-y-3">
+          {/* Input para agregar nueva zona */}
           <div className="flex gap-2">
             <input value={newZoneName} onChange={e => setNewZoneName(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleAddZone()}
@@ -2141,8 +2419,9 @@ function ConfigPage({
             </button>
           </div>
 
-          <div className="space-y-1.5">
-            {zones.map(zone => {
+          {/* Helper de zona — función reutilizable */}
+          {(() => {
+            const renderZoneItem = (zone: Zone) => {
               const isSelected = selectedZoneId === zone.id;
               const isEditing = editingZoneId === zone.id;
               return (
@@ -2188,8 +2467,91 @@ function ConfigPage({
                   </div>
                 </div>
               );
-            })}
-          </div>
+            };
+
+            const assignedZoneIds = new Set(modules.flatMap(m => m.zoneIds));
+            const unassignedZones = zones.filter(z => !assignedZoneIds.has(z.id));
+
+            // Sin módulos: lista plana como antes
+            if (modules.length === 0) {
+              return (
+                <div className="space-y-1.5">
+                  {zones.length === 0
+                    ? <p className="text-center text-slate-400 text-xs py-3 font-bold uppercase">Sin zonas creadas</p>
+                    : zones.map(z => renderZoneItem(z))
+                  }
+                </div>
+              );
+            }
+
+            // Con módulos: agrupado por módulo + bloque de sin módulo si hay
+            return (
+              <div className="space-y-2">
+                {modules.map(mod => {
+                  const modZones = mod.zoneIds.map(id => zones.find(z => z.id === id)).filter(Boolean) as Zone[];
+                  const isExpCfg = expandedModuleCfgIds.has(`zones_${mod.id}`);
+                  return (
+                    <div key={mod.id} className="border-2 border-violet-100 rounded-xl overflow-hidden">
+                      <button
+                        onClick={() => {
+                          setExpandedModuleCfgIds(prev => {
+                            const next = new Set(prev);
+                            const key = `zones_${mod.id}`;
+                            if (next.has(key)) next.delete(key); else next.add(key);
+                            return next;
+                          });
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2.5 bg-violet-50/70 hover:bg-violet-50 text-left transition-all"
+                      >
+                        <div className="w-2 h-2 rounded-full bg-violet-400 shrink-0" />
+                        <span className="flex-1 font-black text-slate-800 text-xs tracking-tight">{mod.name}</span>
+                        <span className="text-[7px] bg-violet-100 text-violet-500 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0">{modZones.length} zonas</span>
+                        <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform ml-1 shrink-0 ${isExpCfg ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                      {isExpCfg && (
+                        <div className="px-2 pb-2 pt-1 space-y-1.5 bg-white">
+                          {modZones.length === 0
+                            ? <p className="text-center text-slate-400 text-[10px] py-2 font-bold uppercase">Sin zonas en este módulo</p>
+                            : modZones.map(z => renderZoneItem(z))
+                          }
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Zonas sin módulo */}
+                {unassignedZones.length > 0 && (
+                  <div className="border-2 border-dashed border-slate-200 rounded-xl overflow-hidden">
+                    <button
+                      onClick={() => {
+                        setExpandedModuleCfgIds(prev => {
+                          const next = new Set(prev);
+                          if (next.has("zones_unassigned")) next.delete("zones_unassigned"); else next.add("zones_unassigned");
+                          return next;
+                        });
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 bg-slate-50 hover:bg-slate-100 text-left transition-all"
+                    >
+                      <div className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
+                      <span className="flex-1 font-black text-slate-500 text-xs tracking-tight">Sin módulo asignado</span>
+                      <span className="text-[7px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0 border border-amber-200">⚠ {unassignedZones.length}</span>
+                      <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform ml-1 shrink-0 ${expandedModuleCfgIds.has("zones_unassigned") ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {expandedModuleCfgIds.has("zones_unassigned") && (
+                      <div className="px-2 pb-2 pt-1 space-y-1.5 bg-white">
+                        {unassignedZones.map(z => renderZoneItem(z))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
