@@ -1120,7 +1120,7 @@ export default function SegurMapApp() {
         {view === "active_issues" && (
           <div className="space-y-6">
             <div className="flex items-center justify-between flex-wrap gap-3">
-              <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tight">Hallazgos Abiertos</h2>
+              <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tight">Hallazgos</h2>
               <div className="flex gap-2">
                 <span className="bg-red-100 text-red-600 px-4 py-1.5 rounded-full font-black text-xs uppercase">
                   {activeFindings.length} PENDIENTES
@@ -1131,20 +1131,27 @@ export default function SegurMapApp() {
               </div>
             </div>
 
-            {activeFindings.length === 0 ? (
+            {allFindings.length === 0 ? (
               <div className="py-24 text-center bg-white rounded-3xl border-2 border-dashed border-slate-100">
                 <p className="text-4xl mb-3">✅</p>
-                <p className="text-slate-400 font-black uppercase tracking-widest text-sm">¡Sin hallazgos activos!</p>
+                <p className="text-slate-400 font-black uppercase tracking-widest text-sm">Sin hallazgos registrados</p>
               </div>
             ) : (() => {
-              // Tarjeta de hallazgo individual (sin cambios de diseño)
-              const renderFindingCard = (f: Finding) => (
-                <div key={f.id} className="bg-white rounded-2xl shadow-lg border border-slate-100 overflow-hidden flex flex-col">
-                  <div className="p-4 bg-red-50 border-b border-red-100">
+              const isFClosed = (f: Finding) => f.is_closed === true || (f as any).is_closed === "true";
+
+              // Tarjeta de hallazgo — pendiente en rojo, resuelto en verde
+              const renderFindingCard = (f: Finding) => {
+                const closed = isFClosed(f);
+                return (
+                <div key={f.id} className={`rounded-2xl shadow-lg border overflow-hidden flex flex-col ${closed ? "bg-green-50/40 border-green-200" : "bg-white border-slate-100"}`}>
+                  <div className={`p-4 border-b ${closed ? "bg-green-100/60 border-green-200" : "bg-red-50 border-red-100"}`}>
                     <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full text-white ${
-                        f.severity === "high" ? "bg-red-600" : f.severity === "medium" ? "bg-orange-500" : "bg-yellow-500"
-                      }`}>{f.severity === "high" ? "ALTA" : f.severity === "medium" ? "MEDIA" : "BAJA"}</span>
+                      {closed
+                        ? <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full text-white bg-green-600">✓ RESUELTO</span>
+                        : <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full text-white ${f.severity === "high" ? "bg-red-600" : f.severity === "medium" ? "bg-orange-500" : "bg-yellow-500"}`}>
+                            {f.severity === "high" ? "ALTA" : f.severity === "medium" ? "MEDIA" : "BAJA"}
+                          </span>
+                      }
                       {f.zone_name && (
                         <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-700 text-white">
                           📍 {f.zone_name}
@@ -1153,6 +1160,11 @@ export default function SegurMapApp() {
                       <span className="text-[9px] text-slate-400 font-bold ml-auto">{new Date(f.created_at).toLocaleDateString()}</span>
                     </div>
                     <h4 className="font-black text-slate-800 text-sm leading-tight">{f.item_label}</h4>
+                    {closed && f.closed_at && (
+                      <p className="text-xs font-black text-blue-600 mt-1">
+                        Cerrado: {new Date(f.closed_at).toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" })}
+                      </p>
+                    )}
                   </div>
                   {f.photo_url && (
                     <div className="cursor-zoom-in" onClick={() => setZoomImage(f.photo_url!)}>
@@ -1168,21 +1180,30 @@ export default function SegurMapApp() {
                         <p className="text-[9px] text-slate-300 leading-relaxed">{f.ai_analysis}</p>
                       </div>
                     )}
+                    {closed && f.corrective_actions && (
+                      <div className="mt-3 bg-green-50 border border-green-200 rounded-lg p-2">
+                        <p className="text-[8px] font-black text-green-600 uppercase mb-0.5">✅ Acciones Correctivas:</p>
+                        <p className="text-[9px] text-slate-700">{f.corrective_actions}</p>
+                      </div>
+                    )}
                   </div>
-                  <div className="p-4 pt-0">
-                    <button
-                      onClick={() => setClosureTarget(f)}
-                      className="w-full py-3 bg-green-600 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow hover:bg-green-700 transition-all"
-                    >
-                      EJECUTAR CIERRE
-                    </button>
-                  </div>
+                  {!closed && (
+                    <div className="p-4 pt-0">
+                      <button
+                        onClick={() => setClosureTarget(f)}
+                        className="w-full py-3 bg-green-600 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow hover:bg-green-700 transition-all"
+                      >
+                        EJECUTAR CIERRE
+                      </button>
+                    </div>
+                  )}
                 </div>
-              );
+                );
+              };
 
-              // Agrupar por fecha (más reciente primero)
+              // Agrupar por fecha (más reciente primero), usando TODOS los hallazgos
               const byDate = new Map<string, Finding[]>();
-              const sortedFindings = [...activeFindings].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+              const sortedFindings = [...allFindings].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
               for (const f of sortedFindings) {
                 const dateKey = new Date(f.created_at).toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
                 if (!byDate.has(dateKey)) byDate.set(dateKey, []);
@@ -1460,6 +1481,7 @@ export default function SegurMapApp() {
       {viewFinding && (
         <FindingViewModal
           finding={viewFinding}
+          sectionName={sections.find(s => s.zoneIds.includes(viewFinding.zone_id || ""))?.name}
           onClose={() => setViewFinding(null)}
           onImageZoom={setZoomImage}
         />
@@ -2067,17 +2089,16 @@ function ClosureModal({ finding, sectionName, onClose, onConfirm }: {
         <div className="p-5 bg-green-50 border-b shrink-0">
           <span className="text-[9px] font-black uppercase text-green-600 bg-green-100 px-2 py-0.5 rounded tracking-widest">Protocolo de Cierre</span>
           {sectionName && (
-            <p className="text-xs font-black text-indigo-600 mt-2">
-              <span className="text-slate-400 font-bold">Sección:</span> {sectionName}
+            <p className="text-sm font-black text-slate-700 mt-2">
+              <span className="text-slate-400 font-bold text-sm">Sección:</span> {sectionName}
             </p>
           )}
           {finding.zone_name && (
             <p className="text-sm font-black text-slate-700 mt-1">
-              <span className="text-slate-400 font-bold text-xs">Zona:</span> 📍 {finding.zone_name}
+              <span className="text-slate-400 font-bold text-sm">Zona:</span> 📍 {finding.zone_name}
             </p>
           )}
-          <h3 className="text-xl font-black text-slate-800 mt-3">Cerrar Hallazgo</h3>
-          <p className="text-slate-500 text-sm mt-0.5 leading-snug">{finding.item_label}</p>
+          <h3 className="text-2xl font-black text-slate-800 mt-3">Cerrar Hallazgo</h3>
         </div>
 
         {/* ── Cuerpo scrollable ── */}
@@ -2151,8 +2172,9 @@ function ClosureModal({ finding, sectionName, onClose, onConfirm }: {
 }
 
 // ─── Finding View Modal ───────────────────────────────────────────────────────
-function FindingViewModal({ finding, onClose, onImageZoom }: {
+function FindingViewModal({ finding, sectionName, onClose, onImageZoom }: {
   finding: Finding;
+  sectionName?: string;
   onClose: () => void;
   onImageZoom?: (url: string) => void;
 }) {
@@ -2161,17 +2183,22 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
     <div className="fixed inset-0 bg-slate-900/90 backdrop-blur flex items-center justify-center z-[150] p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col border-4 border-slate-100">
         <div className={`p-5 border-b flex justify-between items-start ${isClosed ? "bg-green-50" : "bg-red-50"}`}>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full text-white ${isClosed ? "bg-green-600" : "bg-red-600"}`}>
-                {isClosed ? "RESUELTO" : "PENDIENTE"}
-              </span>
-              {finding.zone_name && (
-                <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-700 text-white">
-                  📍 {finding.zone_name}
-                </span>
-              )}
-            </div>
+          <div className="flex-1 min-w-0 pr-3">
+            {/* Status */}
+            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full text-white ${isClosed ? "bg-green-600" : "bg-red-600"}`}>
+              {isClosed ? "RESUELTO" : "PENDIENTE"}
+            </span>
+            {/* Sección y Zona — homologados con ClosureModal */}
+            {sectionName && (
+              <p className="text-sm font-black text-slate-700 mt-2">
+                <span className="text-slate-400 font-bold text-sm">Sección:</span> {sectionName}
+              </p>
+            )}
+            {finding.zone_name && (
+              <p className="text-sm font-black text-slate-700 mt-1">
+                <span className="text-slate-400 font-bold text-sm">Zona:</span> 📍 {finding.zone_name}
+              </p>
+            )}
             <h3 className="text-lg font-black text-slate-800 mt-2 leading-tight">{finding.item_label}</h3>
           </div>
           <button onClick={onClose} className="w-8 h-8 bg-white border rounded-lg flex items-center justify-center text-slate-400 shrink-0">✕</button>
@@ -2202,7 +2229,9 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
               <p className="text-[9px] font-black text-green-600 uppercase mb-1">✅ Acciones Correctivas:</p>
               <p className="text-sm text-slate-700">{finding.corrective_actions}</p>
               {finding.closed_at && (
-                <p className="text-[9px] text-slate-400 mt-2">Cerrado el {new Date(finding.closed_at).toLocaleDateString()}</p>
+                <p className="text-sm font-black text-blue-600 mt-2">
+                  Cerrado el {new Date(finding.closed_at).toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" })}
+                </p>
               )}
             </div>
           )}
