@@ -396,12 +396,40 @@ export default function SegurMapApp() {
     if (!currentInspection) return;
     setIsFinishing(true);
 
-    // Generate AI summary
-    const issueZones = zones.filter(z => z.status === "ISSUE");
-    const okZones = zones.filter(z => z.status === "OK");
-    const findingsForSummary = allFindings.filter(f => f.inspection_id === currentInspection.id);
+    // ── Paso 1: jalar el estado más fresco de la DB antes de cerrar ──────────
+    // Otros dispositivos pueden haber subido hallazgos desde que este abrió la app.
+    let freshFindings: Finding[] = allFindings;
+    let freshZonesData = zones;
+    try {
+      const [freshFinRes, freshInsRes] = await Promise.all([
+        fetch("/api/findings"),
+        fetch("/api/inspections"),
+      ]);
+      const freshFinData = await freshFinRes.json();
+      const freshInsData = await freshInsRes.json();
 
-    const pendingZonesCount = zones.filter(z => z.status === "PENDING").length;
+      if (Array.isArray(freshFinData)) freshFindings = freshFinData;
+      if (Array.isArray(freshInsData)) {
+        const freshActive = freshInsData.find((i: any) => i.id === currentInspection.id);
+        if (freshActive?.zones_data && Array.isArray(freshActive.zones_data)) {
+          // Merge: mantener status local (este dispositivo evaluó zonas),
+          // pero incorporar zones del servidor que estén más completas
+          freshZonesData = freshActive.zones_data.map((serverZone: any) => {
+            const localZone = zones.find(z => z.id === serverZone.id);
+            // Si la zona local tiene status evaluado, prevalece; si no, usar servidor
+            if (localZone && localZone.status !== "PENDING") return localZone;
+            return serverZone;
+          });
+        }
+      }
+    } catch { /* si falla la recarga, continúa con estado local */ }
+
+    // ── Paso 2: construir resumen con datos frescos ──────────────────────────
+    const issueZones = freshZonesData.filter(z => z.status === "ISSUE");
+    const okZones = freshZonesData.filter(z => z.status === "OK");
+    const findingsForSummary = freshFindings.filter(f => f.inspection_id === currentInspection.id);
+
+    const pendingZonesCount = freshZonesData.filter(z => z.status === "PENDING").length;
     let summary = `Inspección completada el ${new Date().toLocaleDateString()}. ${okZones.length} zona${okZones.length !== 1 ? "s" : ""} sin hallazgos, ${issueZones.length} con hallazgos que requieren atención${pendingZonesCount > 0 ? `, ${pendingZonesCount} sin evaluar` : ""}.`;
 
     if (findingsForSummary.length > 0) {
@@ -410,8 +438,8 @@ export default function SegurMapApp() {
           .map(f => `- [${f.zone_name || "Sin zona"}] ${f.item_label}: ${f.description}`)
           .join("\n");
         const zonesContext = pendingZonesCount > 0
-          ? `\nZonas evaluadas: ${okZones.length + issueZones.length} de ${zones.length} (${pendingZonesCount} sin evaluar).`
-          : `\nTodas las zonas fueron evaluadas (${zones.length} en total).`;
+          ? `\nZonas evaluadas: ${okZones.length + issueZones.length} de ${freshZonesData.length} (${pendingZonesCount} sin evaluar).`
+          : `\nTodas las zonas fueron evaluadas (${freshZonesData.length} en total).`;
         const prompt = `Eres un experto en seguridad industrial. Genera un resumen ejecutivo breve (3-4 oraciones en español) de esta inspección de seguridad:\n${findingsList}${zonesContext}\nIncluye las áreas de mayor riesgo y recomendaciones generales.`;
         const aiRes = await fetch("/api/ai", {
           method: "POST",
@@ -425,20 +453,31 @@ export default function SegurMapApp() {
       } catch { /* keep default summary */ }
     }
 
-    await fetch("/api/inspections", {
+    // ── Paso 3: intentar cerrar — el servidor verifica si ya fue cerrado ─────
+    const closeRes = await fetch("/api/inspections", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: currentInspection.id, summary, zones_data: zones, is_active: false }),
+      body: JSON.stringify({ id: currentInspection.id, summary, zones_data: freshZonesData, is_active: false }),
     });
+    const closeData = await closeRes.json();
 
-    // Keep the zones with their final OK/ISSUE status visible on the map
-    const finishedZones = [...zones];
+    if (closeData.already_closed) {
+      // Otro dispositivo ya finalizó — simplemente recargar y mostrar resultado
+      setIsFinishing(false);
+      await loadData();
+      setIsInspectionActive(false);
+      setCurrentInspection(null);
+      setView("current");
+      return;
+    }
+
+    // ── Paso 4: cierre exitoso — recargar todo ───────────────────────────────
+    const finishedZones = [...freshZonesData];
 
     setIsInspectionActive(false);
     setCurrentInspection(null);
     setIsFinishing(false);
 
-    // Full reload
     const [insRes, finRes] = await Promise.all([
       fetch("/api/inspections"),
       fetch("/api/findings"),
@@ -448,7 +487,6 @@ export default function SegurMapApp() {
     const inspList = Array.isArray(insData) ? insData : [];
     setInspections(inspList);
     setAllFindings(Array.isArray(finData) ? finData : []);
-    // Show the just-completed inspection zones with their OK/ISSUE colors
     setZones(finishedZones);
 
     setView("current");
