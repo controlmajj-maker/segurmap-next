@@ -1329,6 +1329,7 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
   const [expandedGroup, setExpandedGroup] = useState<string | null>(SAFETY_CHECKLIST[0].id);
   const [itemToReport, setItemToReport] = useState<{ id: string; label: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [findingToDelete, setFindingToDelete] = useState<string | null>(null);
 
   useEffect(() => {
     if (Object.keys(results).length === 0) {
@@ -1398,63 +1399,12 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
                     <p className="text-[9px] text-slate-500 italic truncate">"{f.description}"</p>
                   </div>
                   <button
-                    onClick={() => {
-                      const updated = { ...findings };
-                      delete updated[key];
-                      setFindings(updated);
-                    }}
+                    onClick={() => setFindingToDelete(key)}
                     className="shrink-0 w-5 h-5 bg-red-100 text-red-500 rounded-md text-[10px] flex items-center justify-center hover:bg-red-200 font-black"
                   >✕</button>
                 </div>
               ))
             }
-          </div>
-
-          <div className="space-y-2">
-            {SAFETY_CHECKLIST.map(group => (
-              <div key={group.id} className="border border-slate-100 rounded-xl overflow-hidden">
-                <button
-                  onClick={() => setExpandedGroup(expandedGroup === group.id ? null : group.id)}
-                  className={`w-full p-3 md:p-4 flex items-center justify-between text-left transition-all ${expandedGroup === group.id ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-700"}`}
-                >
-                  <span className="font-bold text-xs md:text-sm flex items-center gap-2">
-                    {group.title}
-                    {group.items.some(i => results[i.id] === false) && (
-                      <span className="w-4 h-4 bg-red-500 text-white rounded-full text-[8px] flex items-center justify-center animate-pulse">!</span>
-                    )}
-                  </span>
-                  <svg className="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={expandedGroup === group.id ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
-                  </svg>
-                </button>
-
-                {expandedGroup === group.id && (
-                  <div className="p-2 space-y-1 bg-white">
-                    {group.items.map(item => (
-                      <div
-                        key={item.id}
-                        onClick={() => setItemToReport(item)}
-                        className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-all border-2 ${results[item.id] === false ? "bg-red-50 border-red-200" : "border-transparent hover:bg-slate-50"}`}
-                      >
-                        <div className={`mt-0.5 w-6 h-6 rounded-lg flex items-center justify-center shrink-0 border-2 transition-all ${results[item.id] === false ? "bg-red-600 border-red-600 text-white" : "border-slate-300"}`}>
-                          {results[item.id] === false
-                            ? <span className="text-[10px]">✕</span>
-                            : <span className="text-[10px] text-slate-300">✓</span>}
-                        </div>
-                        <div>
-                          <p className={`text-xs md:text-sm leading-tight ${results[item.id] === false ? "text-red-800 font-bold" : "text-slate-600"}`}>{item.label}</p>
-                          {results[item.id] === false && findings[item.id] && (
-                            <p className="text-[9px] text-red-500 font-bold mt-1">
-                              📷 Evidencia registrada {findings[item.id].ai_analysis ? "· 🤖 IA lista" : ""}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
           </div>
         </div>
 
@@ -1498,6 +1448,37 @@ function InspectionModal({ zone, inspectionId, onClose, onSave }: {
           }}
           onCancel={() => setItemToReport(null)}
         />
+      )}
+
+      {findingToDelete && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur flex items-center justify-center z-[200] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs border-4 border-red-100 overflow-hidden">
+            <div className="p-5 bg-red-50 border-b text-center">
+              <p className="text-2xl mb-1">🗑</p>
+              <h3 className="text-base font-black text-slate-800">¿Eliminar hallazgo?</h3>
+              <p className="text-slate-500 text-xs mt-1">Esta acción no se puede deshacer.</p>
+            </div>
+            <div className="p-4 flex gap-2">
+              <button
+                onClick={() => setFindingToDelete(null)}
+                className="flex-1 py-2.5 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50 transition-all"
+              >
+                CANCELAR
+              </button>
+              <button
+                onClick={() => {
+                  const updated = { ...findings };
+                  delete updated[findingToDelete];
+                  setFindings(updated);
+                  setFindingToDelete(null);
+                }}
+                className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 transition-all shadow"
+              >
+                ELIMINAR
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
