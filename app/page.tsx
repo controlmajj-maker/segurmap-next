@@ -142,6 +142,13 @@ export default function SegurMapApp() {
   const [configUnlocked, setConfigUnlocked] = useState(false);
   const [sections, setSections] = useState<Section[]>([]);
   const [expandedSectionIds, setExpandedSectionIds] = useState<Set<string>>(new Set());
+  // Estado de colapso para vista de hallazgos (vacío = todo expandido por default)
+  const [findingsCollapsedKeys, setFindingsCollapsedKeys] = useState<Set<string>>(new Set());
+  const toggleFindingKey = (key: string) => setFindingsCollapsedKeys(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
 
   const saveSections = useCallback(async (updated: Section[]) => {
     setSections(updated);
@@ -1182,14 +1189,18 @@ export default function SegurMapApp() {
                 byDate.get(dateKey)!.push(f);
               }
 
+              // Usa el estado del componente (hook en scope correcto)
+              const collapsedKeys = findingsCollapsedKeys;
+              const toggleKey = toggleFindingKey;
+
               return (
                 <div className="space-y-6">
                   {Array.from(byDate.entries()).map(([dateLabel, datefindings]) => {
+                    const dateCollapsed = collapsedKeys.has(`date:${dateLabel}`);
                     // Dentro de cada fecha, agrupar por sección > zona
                     const bySec = new Map<string, { secName: string; byZone: Map<string, { zoneName: string; findings: Finding[] }> }>();
 
                     for (const f of datefindings) {
-                      // Encontrar la sección que contiene esta zona
                       const sec = sections.find(s => s.zoneIds.includes(f.zone_id || ""));
                       const secKey  = sec?.id || "__sin_seccion__";
                       const secName = sec?.name || "Sin sección";
@@ -1204,39 +1215,70 @@ export default function SegurMapApp() {
 
                     return (
                       <div key={dateLabel} className="space-y-4">
-                        {/* Cabecera de fecha */}
-                        <div className="flex items-center gap-3">
+                        {/* Cabecera de fecha — colapsable */}
+                        <button
+                          onClick={() => toggleKey(`date:${dateLabel}`)}
+                          className="w-full flex items-center gap-3 group"
+                        >
                           <div className="h-px flex-1 bg-slate-200" />
-                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-3 py-1 bg-slate-100 rounded-full border border-slate-200">
+                          <span className="flex items-center gap-1.5 text-[10px] font-black text-slate-500 uppercase tracking-widest px-3 py-1 bg-slate-100 rounded-full border border-slate-200 hover:bg-slate-200 transition-all">
                             📅 {dateLabel}
+                            <span className="text-slate-400 text-[8px]">({datefindings.length})</span>
+                            <svg className={`w-3 h-3 text-slate-400 transition-transform ${dateCollapsed ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
                           </span>
                           <div className="h-px flex-1 bg-slate-200" />
-                        </div>
+                        </button>
 
-                        {/* Por sección */}
-                        {Array.from(bySec.entries()).map(([secKey, { secName, byZone }]) => (
-                          <div key={secKey} className="space-y-3">
-                            {/* Cabecera de sección */}
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" />
-                              <span className="text-xs font-black text-indigo-700 uppercase tracking-wide">{secName}</span>
-                              <div className="h-px flex-1 bg-indigo-100" />
+                        {!dateCollapsed && Array.from(bySec.entries()).map(([secKey, { secName, byZone }]) => {
+                          const secCollapsed = collapsedKeys.has(`sec:${dateLabel}:${secKey}`);
+                          const secTotal = Array.from(byZone.values()).reduce((acc, { findings: ff }) => acc + ff.length, 0);
+                          return (
+                            <div key={secKey} className="space-y-3">
+                              {/* Cabecera de sección — colapsable */}
+                              <button
+                                onClick={() => toggleKey(`sec:${dateLabel}:${secKey}`)}
+                                className="w-full flex items-center gap-2 group"
+                              >
+                                <div className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" />
+                                <span className="text-xs font-black text-indigo-700 uppercase tracking-wide">{secName}</span>
+                                <span className="text-[8px] font-black text-indigo-400 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded-full">{secTotal}</span>
+                                <div className="h-px flex-1 bg-indigo-100" />
+                                <svg className={`w-3.5 h-3.5 text-indigo-300 transition-transform ${secCollapsed ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+
+                              {!secCollapsed && Array.from(byZone.entries()).map(([zoneKey, { zoneName, findings: zoneFindings }]) => {
+                                const zoneCollapsed = collapsedKeys.has(`zone:${dateLabel}:${secKey}:${zoneKey}`);
+                                return (
+                                  <div key={zoneKey} className="space-y-3">
+                                    {/* Cabecera de zona — colapsable */}
+                                    <button
+                                      onClick={() => toggleKey(`zone:${dateLabel}:${secKey}:${zoneKey}`)}
+                                      className="w-full flex items-center gap-2 pl-4 group"
+                                    >
+                                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                        📍 {zoneName}
+                                      </span>
+                                      <span className="text-[8px] font-black text-slate-400 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-full">{zoneFindings.length} hall.</span>
+                                      <div className="h-px flex-1 bg-slate-100" />
+                                      <svg className={`w-3 h-3 text-slate-300 transition-transform ${zoneCollapsed ? "" : "rotate-180"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </button>
+                                    {!zoneCollapsed && (
+                                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                                        {zoneFindings.map(f => renderFindingCard(f))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
-
-                            {/* Por zona */}
-                            {Array.from(byZone.entries()).map(([zoneKey, { zoneName, findings: zoneFindings }]) => (
-                              <div key={zoneKey} className="space-y-3">
-                                {/* Cabecera de zona */}
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-4">
-                                  📍 {zoneName} <span className="text-slate-300">·</span> {zoneFindings.length} hallazgo{zoneFindings.length !== 1 ? "s" : ""}
-                                </p>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                                  {zoneFindings.map(f => renderFindingCard(f))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     );
                   })}
@@ -1409,6 +1451,7 @@ export default function SegurMapApp() {
       {closureTarget && (
         <ClosureModal
           finding={closureTarget}
+          sectionName={sections.find(s => s.zoneIds.includes(closureTarget.zone_id || ""))?.name}
           onClose={() => setClosureTarget(null)}
           onConfirm={handleCloseFinding}
         />
@@ -2007,35 +2050,70 @@ function FindingDetailModal({ item, zoneName, inspectionId, existing, onSave, on
 }
 
 // ─── Closure Modal ────────────────────────────────────────────────────────────
-function ClosureModal({ finding, onClose, onConfirm }: {
+function ClosureModal({ finding, sectionName, onClose, onConfirm }: {
   finding: Finding;
+  sectionName?: string;
   onClose: () => void;
   onConfirm: (id: string, correctiveActions: string) => void;
 }) {
   const [actions, setActions] = useState("");
+  const [zoomPhoto, setZoomPhoto] = useState(false);
 
   return (
     <div className="fixed inset-0 bg-slate-900/90 backdrop-blur flex items-center justify-center z-[120] p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border-4 border-green-50 overflow-hidden">
-        <div className="p-6 bg-green-50 border-b">
-          <span className="text-[9px] font-black uppercase text-green-600 bg-green-100 px-2 py-0.5 rounded">Protocolo de Cierre</span>
-          {finding.zone_name && <p className="text-[9px] font-black text-slate-400 uppercase mt-1">📍 {finding.zone_name}</p>}
-          <h3 className="text-xl font-black text-slate-800 mt-2">Cerrar Hallazgo</h3>
-          <p className="text-slate-500 text-sm mt-1">{finding.item_label}</p>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border-4 border-green-50 overflow-hidden flex flex-col max-h-[92vh]">
+
+        {/* ── Encabezado ── */}
+        <div className="p-5 bg-green-50 border-b shrink-0">
+          <span className="text-[9px] font-black uppercase text-green-600 bg-green-100 px-2 py-0.5 rounded tracking-widest">Protocolo de Cierre</span>
+          {sectionName && (
+            <p className="text-xs font-black text-indigo-600 mt-2">
+              <span className="text-slate-400 font-bold">Sección:</span> {sectionName}
+            </p>
+          )}
+          {finding.zone_name && (
+            <p className="text-sm font-black text-slate-700 mt-1">
+              <span className="text-slate-400 font-bold text-xs">Zona:</span> 📍 {finding.zone_name}
+            </p>
+          )}
+          <h3 className="text-xl font-black text-slate-800 mt-3">Cerrar Hallazgo</h3>
+          <p className="text-slate-500 text-sm mt-0.5 leading-snug">{finding.item_label}</p>
         </div>
-        <div className="p-6 space-y-4">
+
+        {/* ── Cuerpo scrollable ── */}
+        <div className="overflow-y-auto flex-1 p-5 space-y-4">
+
+          {/* Descripción del hallazgo */}
           <div className="bg-slate-50 p-3 rounded-xl border">
-            <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Hallazgo:</p>
+            <p className="text-[9px] font-black text-slate-400 uppercase mb-1 tracking-widest">Descripción del Hallazgo:</p>
             <p className="text-sm text-slate-700 italic">"{finding.description}"</p>
           </div>
-          {finding.ai_analysis && (
-            <div className="bg-slate-900 p-3 rounded-xl">
-              <p className="text-[9px] font-black text-blue-400 uppercase mb-1">🤖 Recomendación IA:</p>
-              <p className="text-xs text-slate-300">{finding.ai_analysis}</p>
+
+          {/* Foto de evidencia */}
+          {finding.photo_url && (
+            <div>
+              <p className="text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Evidencia Fotográfica:</p>
+              <div
+                className="relative rounded-xl overflow-hidden border-2 border-slate-100 cursor-zoom-in"
+                onClick={() => setZoomPhoto(true)}
+              >
+                <img src={finding.photo_url} alt="Evidencia" className="w-full max-h-48 object-cover" />
+                <div className="absolute bottom-0 inset-x-0 bg-black/40 text-center py-1">
+                  <p className="text-[8px] font-black text-white uppercase tracking-widest">Toca para ampliar</p>
+                </div>
+              </div>
             </div>
           )}
+
+          {/* Recomendaciones */}
+          <div className="bg-blue-50 border-2 border-blue-100 rounded-xl p-4">
+            <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest mb-2">📋 Recomendaciones</p>
+            <p className="text-xs text-blue-400 italic">Sin recomendaciones disponibles por el momento.</p>
+          </div>
+
+          {/* Acciones Correctivas */}
           <div>
-            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Acciones Correctivas (Obligatorio)</label>
+            <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Acciones Correctivas <span className="text-red-500">(Obligatorio)</span></label>
             <textarea
               rows={4}
               value={actions}
@@ -2045,17 +2123,29 @@ function ClosureModal({ finding, onClose, onConfirm }: {
             />
           </div>
         </div>
-        <div className="p-6 bg-slate-50 border-t flex gap-3">
+
+        {/* ── Footer ── */}
+        <div className="p-5 bg-slate-50 border-t flex gap-3 shrink-0">
           <button onClick={onClose} className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-400">CANCELAR</button>
           <button
             disabled={!actions.trim()}
             onClick={() => onConfirm(finding.id, actions)}
             className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all ${!actions.trim() ? "bg-slate-300" : "bg-green-600 hover:bg-green-700 shadow-lg"}`}
           >
-            CERTIFICAR CIERRE
+            VALIDAR CIERRE
           </button>
         </div>
       </div>
+
+      {/* Zoom foto */}
+      {zoomPhoto && finding.photo_url && (
+        <div
+          className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-4 cursor-zoom-out"
+          onClick={() => setZoomPhoto(false)}
+        >
+          <img src={finding.photo_url} alt="Evidencia ampliada" className="max-w-full max-h-full object-contain rounded-xl" />
+        </div>
+      )}
     </div>
   );
 }
