@@ -61,33 +61,3 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-
-// PATCH /api/findings — bulk update AI fields (description_ai + recommendations)
-// Body: { updates: Array<{ id, description_ai, recommendations }> }
-export async function PATCH(req: Request) {
-  try {
-    const body = await req.json();
-    const updates: Array<{ id: string; description_ai: string; recommendations: string }> = body.updates ?? [];
-
-    if (!Array.isArray(updates) || updates.length === 0) {
-      return NextResponse.json({ ok: true, updated: 0 });
-    }
-
-    let updated = 0;
-    for (const u of updates) {
-      if (!u.id) continue;
-      await pool.query(
-        `UPDATE findings
-         SET description_ai  = $1,
-             recommendations = $2
-         WHERE id = $3`,
-        [u.description_ai || null, u.recommendations || null, u.id]
-      );
-      updated++;
-    }
-
-    return NextResponse.json({ ok: true, updated });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-}
