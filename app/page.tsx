@@ -577,8 +577,8 @@ export default function SegurMapApp() {
             <nav className="hidden lg:flex gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
               {[
                 { key: "current", label: "Recorrido" },
-                { key: "active_issues", label: `Resolución (${activeFindings.length})` },
-                { key: "history", label: "Auditorías" },
+                { key: "active_issues", label: `Hallazgos (${activeFindings.length})` },
+                { key: "history", label: "Historial" },
                 { key: "config", label: "Configuración" },
               ].map(({ key, label }) => (
                 <button
@@ -872,9 +872,9 @@ export default function SegurMapApp() {
               const allDone = pendingZones === 0;
               if (!isInspectionActive || evaluatedZones === 0) return null;
               return (
-                <div className={`p-6 md:p-8 rounded-3xl text-white flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl border-b-4 ${allDone ? "bg-slate-900 border-blue-600" : "bg-slate-800 border-orange-500"}`}>
+                <div className={`p-6 md:p-8 rounded-3xl text-white flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl border-b-4 ${allDone ? "bg-slate-900 border-blue-600" : "bg-slate-800 border-green-500"}`}>
                   <div>
-                    <h3 className={`text-xl md:text-2xl font-black mb-1 ${allDone ? "text-blue-400" : "text-orange-400"}`}>
+                    <h3 className={`text-xl md:text-2xl font-black mb-1 ${allDone ? "text-blue-400" : "text-green-400"}`}>
                       {allDone ? "Listo para finalizar recorrido" : "Listo para finalizar recorrido"}
                     </h3>
                     <p className="text-slate-400 text-sm">
@@ -1087,6 +1087,18 @@ export default function SegurMapApp() {
         {view === "history" && (
           <div className="space-y-4">
             <h2 className="text-2xl md:text-4xl font-black text-slate-800 tracking-tight">Historial de Auditorías</h2>
+
+            {/* Stats: Auditorías totales + Hallazgos abiertos */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex flex-col items-center justify-center text-center">
+                <p className="text-3xl font-black text-slate-800 leading-none">{inspections.filter((i: any) => !i.is_active).length}</p>
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-2 leading-tight">Auditorías<br/>totales</p>
+              </div>
+              <div className={`rounded-2xl border shadow-sm p-4 flex flex-col items-center justify-center text-center ${activeFindings.length > 0 ? "bg-red-50 border-red-100" : "bg-white border-slate-100"}`}>
+                <p className={`text-3xl font-black leading-none ${activeFindings.length > 0 ? "text-red-600" : "text-slate-800"}`}>{activeFindings.length}</p>
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mt-2 leading-tight">Hallazgos<br/>abiertos</p>
+              </div>
+            </div>
 
             {inspections.filter((i: any) => !i.is_active).length === 0 ? (
               <div className="py-20 text-center bg-white rounded-3xl border-2 border-dashed border-slate-100">
