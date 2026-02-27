@@ -2559,6 +2559,51 @@ function ConfigPage({
     await commitZones(updatedZones, updatedSections);
   };
 
+  // ── Reorder handlers ──
+  const handleMoveSectionUp = async (idx: number) => {
+    if (idx === 0) return;
+    const updated = [...sections];
+    [updated[idx - 1], updated[idx]] = [updated[idx], updated[idx - 1]];
+    setIsSaving(true); setLastSaveStatus("saving");
+    try { await onSectionsChange(updated); setLastSaveStatus("ok"); setTimeout(() => setLastSaveStatus("idle"), 2000); }
+    catch { setLastSaveStatus("error"); } finally { setIsSaving(false); }
+  };
+
+  const handleMoveSectionDown = async (idx: number) => {
+    if (idx === sections.length - 1) return;
+    const updated = [...sections];
+    [updated[idx], updated[idx + 1]] = [updated[idx + 1], updated[idx]];
+    setIsSaving(true); setLastSaveStatus("saving");
+    try { await onSectionsChange(updated); setLastSaveStatus("ok"); setTimeout(() => setLastSaveStatus("idle"), 2000); }
+    catch { setLastSaveStatus("error"); } finally { setIsSaving(false); }
+  };
+
+  const handleMoveZoneUp = async (secId: string, zoneIdx: number) => {
+    if (zoneIdx === 0) return;
+    const updated = sections.map(s => {
+      if (s.id !== secId) return s;
+      const ids = [...s.zoneIds];
+      [ids[zoneIdx - 1], ids[zoneIdx]] = [ids[zoneIdx], ids[zoneIdx - 1]];
+      return { ...s, zoneIds: ids };
+    });
+    setIsSaving(true); setLastSaveStatus("saving");
+    try { await onSectionsChange(updated); setLastSaveStatus("ok"); setTimeout(() => setLastSaveStatus("idle"), 2000); }
+    catch { setLastSaveStatus("error"); } finally { setIsSaving(false); }
+  };
+
+  const handleMoveZoneDown = async (secId: string, zoneIdx: number, totalZones: number) => {
+    if (zoneIdx === totalZones - 1) return;
+    const updated = sections.map(s => {
+      if (s.id !== secId) return s;
+      const ids = [...s.zoneIds];
+      [ids[zoneIdx], ids[zoneIdx + 1]] = [ids[zoneIdx + 1], ids[zoneIdx]];
+      return { ...s, zoneIds: ids };
+    });
+    setIsSaving(true); setLastSaveStatus("saving");
+    try { await onSectionsChange(updated); setLastSaveStatus("ok"); setTimeout(() => setLastSaveStatus("idle"), 2000); }
+    catch { setLastSaveStatus("error"); } finally { setIsSaving(false); }
+  };
+
   // ── History handlers ──
   const handleConfirmDeleteInspection = async () => {
     if (!inspToDelete || inspDeleteWord !== "BORRAR") return;
@@ -2636,10 +2681,12 @@ function ConfigPage({
           )}
 
           <div className="space-y-2">
-            {sections.map(sec => {
+            {sections.map((sec, secIdx) => {
               const isExpanded = expandedSectionCfgIds.has(sec.id);
               const isEditing  = editingSectionId === sec.id;
               const secZones   = sec.zoneIds.map(id => zones.find(z => z.id === id)).filter(Boolean) as Zone[];
+              const isFirst    = secIdx === 0;
+              const isLast     = secIdx === sections.length - 1;
               return (
                 <div key={sec.id} className="border-2 border-indigo-100 rounded-xl overflow-hidden">
                   {/* Cabecera sección */}
@@ -2647,6 +2694,29 @@ function ConfigPage({
                     className="flex items-center justify-between px-3 py-2.5 bg-indigo-50/70 cursor-pointer hover:bg-indigo-50"
                     onClick={() => !isEditing && toggleSectionCfg(sec.id)}
                   >
+                    {/* Botones reorden sección */}
+                    <div className="flex flex-col gap-0.5 mr-2 shrink-0" onClick={e => e.stopPropagation()}>
+                      <button
+                        onClick={() => handleMoveSectionUp(secIdx)}
+                        disabled={isFirst || isSaving}
+                        className={`w-5 h-4 rounded flex items-center justify-center transition-all ${isFirst ? "text-slate-200 cursor-default" : "text-slate-400 hover:text-indigo-600 hover:bg-indigo-100"}`}
+                        title="Subir sección"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => handleMoveSectionDown(secIdx)}
+                        disabled={isLast || isSaving}
+                        className={`w-5 h-4 rounded flex items-center justify-center transition-all ${isLast ? "text-slate-200 cursor-default" : "text-slate-400 hover:text-indigo-600 hover:bg-indigo-100"}`}
+                        title="Bajar sección"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 shrink-0" />
                       {isEditing ? (
@@ -2689,11 +2759,36 @@ function ConfigPage({
                   {isExpanded && (
                     <div className="px-3 pb-3 pt-2 bg-white space-y-1.5">
                       {/* Lista de zonas de esta sección */}
-                      {secZones.map(zone => {
+                      {secZones.map((zone, zoneIdx) => {
                         const isEditingZone = editingZoneId === zone.id;
+                        const zoneIsFirst   = zoneIdx === 0;
+                        const zoneIsLast    = zoneIdx === secZones.length - 1;
                         return (
                           <div key={zone.id} className="border-2 border-slate-100 rounded-xl overflow-hidden">
                             <div className="flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-white transition-all">
+                              {/* Botones reorden zona */}
+                              <div className="flex flex-col gap-0.5 mr-2 shrink-0">
+                                <button
+                                  onClick={() => handleMoveZoneUp(sec.id, zoneIdx)}
+                                  disabled={zoneIsFirst || isSaving}
+                                  className={`w-5 h-4 rounded flex items-center justify-center transition-all ${zoneIsFirst ? "text-slate-200 cursor-default" : "text-slate-400 hover:text-slate-700 hover:bg-slate-200"}`}
+                                  title="Subir zona"
+                                >
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
+                                  </svg>
+                                </button>
+                                <button
+                                  onClick={() => handleMoveZoneDown(sec.id, zoneIdx, secZones.length)}
+                                  disabled={zoneIsLast || isSaving}
+                                  className={`w-5 h-4 rounded flex items-center justify-center transition-all ${zoneIsLast ? "text-slate-200 cursor-default" : "text-slate-400 hover:text-slate-700 hover:bg-slate-200"}`}
+                                  title="Bajar zona"
+                                >
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                                  </svg>
+                                </button>
+                              </div>
                               <div className="flex items-center gap-2 min-w-0 flex-1">
                                 <div className={`w-2 h-2 rounded-full shrink-0 ${zone.status === "OK" ? "bg-green-500" : zone.status === "ISSUE" ? "bg-red-500" : "bg-slate-300"}`} />
                                 {isEditingZone ? (
