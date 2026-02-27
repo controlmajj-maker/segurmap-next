@@ -360,7 +360,7 @@ export default function SegurMapApp() {
     );
     setZones(updatedZones);
 
-    // 2. Save each new finding to DB
+    // 2. Save each new finding to DB — only those with local_ id (not yet persisted)
     for (const [, finding] of Object.entries(newFindings)) {
       if (!finding.id.startsWith("local_")) continue;
       await fetch("/api/findings", {
@@ -379,14 +379,21 @@ export default function SegurMapApp() {
       });
     }
 
-    // 3. Persist zone colors to DB (without touching zones state again)
+    // 3. Clear zone.findings in state — the source of truth is now allFindings (DB).
+    //    This prevents duplicate inserts if the zone is opened and validated again.
+    const cleanedZones = updatedZones.map(z =>
+      z.id === zoneId ? { ...z, findings: {} } : z
+    );
+    setZones(cleanedZones);
+
+    // 4. Persist zone colors to DB (with empty findings — counter uses allFindings)
     await fetch("/api/inspections", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: currentInspection!.id, zones_data: updatedZones }),
+      body: JSON.stringify({ id: currentInspection!.id, zones_data: cleanedZones }),
     });
 
-    // 4. Reload only findings (not zones, to avoid overwriting state)
+    // 5. Reload findings from DB — this is now the single source of truth for the counter
     const finRes = await fetch("/api/findings");
     const finData = await finRes.json();
     setAllFindings(Array.isArray(finData) ? finData : []);
