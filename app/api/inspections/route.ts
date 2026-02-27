@@ -29,6 +29,19 @@ export async function POST(req: Request) {
 export async function PUT(req: Request) {
   try {
     const body = await req.json();
+
+    // If this is a finish request (is_active: false), check first that the
+    // inspection is still active in DB — another device may have already closed it.
+    if (body.is_active === false) {
+      const check = await pool.query(
+        "SELECT is_active FROM inspections WHERE id = $1",
+        [body.id]
+      );
+      if (!check.rows[0] || check.rows[0].is_active === false) {
+        return NextResponse.json({ already_closed: true });
+      }
+    }
+
     const result = await pool.query(
       "UPDATE inspections SET summary = COALESCE($1, summary), zones_data = COALESCE($2, zones_data), is_active = COALESCE($3, is_active) WHERE id = $4 RETURNING *",
       [body.summary || null, body.zones_data ? JSON.stringify(body.zones_data) : null, body.is_active !== undefined ? body.is_active : null, body.id]
