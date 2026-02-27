@@ -35,7 +35,7 @@ interface Zone {
   findings: Record<string, Finding>;
 }
 
-interface Module {
+interface Section {
   id: string;
   name: string;
   zoneIds: string[];
@@ -140,25 +140,25 @@ export default function SegurMapApp() {
   const [configPassword, setConfigPassword] = useState("");
   const [configPasswordError, setConfigPasswordError] = useState(false);
   const [configUnlocked, setConfigUnlocked] = useState(false);
-  const [modules, setModules] = useState<Module[]>(() => {
+  const [sections, setSections] = useState<Section[]>([]);
+  const [expandedSectionIds, setExpandedSectionIds] = useState<Set<string>>(new Set());
+
+  const saveSections = useCallback(async (updated: Section[]) => {
+    setSections(updated);
     try {
-      const saved = typeof window !== "undefined" ? localStorage.getItem("maq_modules") : null;
-      if (saved) return JSON.parse(saved) as Module[];
-    } catch {}
-    return [];
-  });
-  const [expandedModuleIds, setExpandedModuleIds] = useState<Set<string>>(new Set());
+      await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sections_config: JSON.stringify(updated) }),
+      });
+    } catch (e) { console.error("[saveSections] error:", e); }
+  }, []);
 
-  const saveModules = (updated: Module[]) => {
-    setModules(updated);
-    try { if (typeof window !== "undefined") localStorage.setItem("maq_modules", JSON.stringify(updated)); } catch {}
-  };
-
-  const toggleModule = (moduleId: string) => {
-    setExpandedModuleIds(prev => {
+  const toggleSection = (sectionId: string) => {
+    setExpandedSectionIds(prev => {
       const next = new Set(prev);
-      if (next.has(moduleId)) next.delete(moduleId);
-      else next.add(moduleId);
+      if (next.has(sectionId)) next.delete(sectionId);
+      else next.add(sectionId);
       return next;
     });
   };
@@ -190,6 +190,14 @@ export default function SegurMapApp() {
             configZones = parsed;
           }
         } catch (e) { console.error("[loadData] parse error:", e); }
+      }
+
+      // Load sections from DB
+      if (cfgData.sections_config) {
+        try {
+          const parsedSections: Section[] = JSON.parse(cfgData.sections_config);
+          if (Array.isArray(parsedSections)) setSections(parsedSections);
+        } catch (e) { console.error("[loadData] sections parse error:", e); }
       }
 
       // Active inspection owns zones while running
@@ -829,22 +837,21 @@ export default function SegurMapApp() {
                 );
               })()}
 
-              {/* ── Lista de zonas agrupada por módulos ── */}
+              {/* ── Lista de zonas agrupada por secciones ── */}
               {(() => {
-                // Zonas sin módulo asignado
-                const assignedZoneIds = new Set(modules.flatMap(m => m.zoneIds));
+                const assignedZoneIds = new Set(sections.flatMap(s => s.zoneIds));
                 const unassignedZones = zones.filter(z => !assignedZoneIds.has(z.id));
 
                 const renderZoneRow = (zone: Zone, idx: number) => {
-                  const isOK    = zone.status === "OK";
-                  const isISSUE = zone.status === "ISSUE";
+                  const isOK      = zone.status === "OK";
+                  const isISSUE   = zone.status === "ISSUE";
                   const isClickable = isInspectionActive;
-                  const dotClass   = isOK ? "bg-green-400" : isISSUE ? "bg-red-500" : isInspectionActive ? "bg-slate-400" : "bg-slate-300";
-                  const dotAnim    = isISSUE ? "animate-pulse" : "";
+                  const dotClass  = isOK ? "bg-green-400" : isISSUE ? "bg-red-500" : isInspectionActive ? "bg-slate-400" : "bg-slate-300";
+                  const dotAnim   = isISSUE ? "animate-pulse" : "";
                   const badgeClass = isOK    ? "bg-green-500/10 text-green-600 border-green-200" :
                                      isISSUE ? "bg-red-500/10 text-red-600 border-red-200" :
                                                "bg-slate-100 text-slate-400 border-slate-200";
-                  const rowClass   = isInspectionActive
+                  const rowClass  = isInspectionActive
                     ? isOK    ? "bg-green-50/40 border-green-200 hover:border-green-400 hover:bg-green-50/70"
                     : isISSUE ? "bg-red-50/40 border-red-200 hover:border-red-400 hover:bg-red-50/70"
                     :           "bg-white border-slate-200 hover:border-blue-400 hover:bg-blue-50/30"
@@ -885,33 +892,36 @@ export default function SegurMapApp() {
                   );
                 };
 
+                if (sections.length === 0) {
+                  return (
+                    <div className="space-y-2">
+                      {zones.map((zone, idx) => renderZoneRow(zone, idx))}
+                    </div>
+                  );
+                }
+
                 return (
                   <div className="space-y-3">
-                    {modules.length === 0 && unassignedZones.length > 0 && (
-                      <div className="space-y-2">
-                        {unassignedZones.map((zone, idx) => renderZoneRow(zone, idx))}
-                      </div>
-                    )}
-                    {modules.map(mod => {
-                      const modZones = mod.zoneIds.map(id => zones.find(z => z.id === id)).filter(Boolean) as Zone[];
-                      const isExpanded = expandedModuleIds.has(mod.id);
-                      const hasIssue = modZones.some(z => z.status === "ISSUE");
-                      const allOk = modZones.length > 0 && modZones.every(z => z.status === "OK");
-                      const pendingCount = modZones.filter(z => z.status === "PENDING").length;
-                      const issueCount = modZones.filter(z => z.status === "ISSUE").length;
+                    {sections.map(sec => {
+                      const secZones = sec.zoneIds.map(id => zones.find(z => z.id === id)).filter(Boolean) as Zone[];
+                      const isExpanded = !expandedSectionIds.has(sec.id);
+                      const hasIssue   = secZones.some(z => z.status === "ISSUE");
+                      const allOk      = secZones.length > 0 && secZones.every(z => z.status === "OK");
+                      const issueCount = secZones.filter(z => z.status === "ISSUE").length;
+                      const evaluatedCount = secZones.filter(z => z.status !== "PENDING").length;
+                      const totalCount     = secZones.length;
                       return (
-                        <div key={mod.id} className={`rounded-2xl border-2 overflow-hidden transition-all ${hasIssue ? "border-red-200" : allOk ? "border-green-200" : "border-slate-200"}`}>
+                        <div key={sec.id} className={`rounded-2xl border-2 overflow-hidden transition-all ${hasIssue ? "border-red-200" : allOk ? "border-green-200" : "border-slate-200"}`}>
                           <button
-                            onClick={() => toggleModule(mod.id)}
+                            onClick={() => toggleSection(sec.id)}
                             className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-all ${hasIssue ? "bg-red-50/60" : allOk ? "bg-green-50/60" : "bg-slate-50"}`}
                           >
                             <div className={`w-2 h-2 rounded-full shrink-0 ${hasIssue ? "bg-red-500 animate-pulse" : allOk ? "bg-green-500" : "bg-slate-300"}`} />
-                            <span className="flex-1 font-black text-sm text-slate-800 tracking-tight">{mod.name}</span>
+                            <span className="flex-1 font-black text-sm text-slate-800 tracking-tight">{sec.name}</span>
                             <div className="flex items-center gap-1.5 shrink-0">
                               {issueCount > 0 && <span className="text-[8px] font-black text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">⚠ {issueCount}</span>}
-                              {pendingCount > 0 && isInspectionActive && <span className="text-[8px] font-black text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">{pendingCount} pend.</span>}
                               {allOk && <span className="text-[8px] font-black text-green-600 bg-green-100 border border-green-200 px-2 py-0.5 rounded-full">✓ OK</span>}
-                              <span className="text-[8px] font-black text-slate-400 bg-white border border-slate-200 px-2 py-0.5 rounded-full ml-1">{modZones.length} zonas</span>
+                              <span className="text-[8px] font-black text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded-full ml-1">{evaluatedCount}/{totalCount} eval.</span>
                               <svg className={`w-4 h-4 text-slate-400 transition-transform ml-1 ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                               </svg>
@@ -919,21 +929,21 @@ export default function SegurMapApp() {
                           </button>
                           {isExpanded && (
                             <div className="px-3 pb-3 pt-1 space-y-2 bg-white">
-                              {modZones.length === 0
-                                ? <p className="text-xs text-slate-400 text-center py-3 font-bold uppercase">Sin zonas asignadas</p>
-                                : modZones.map((zone, idx) => renderZoneRow(zone, idx))
+                              {secZones.length === 0
+                                ? <p className="text-xs text-slate-400 text-center py-3 font-bold uppercase">Sin zonas en esta sección</p>
+                                : secZones.map((zone, idx) => renderZoneRow(zone, idx))
                               }
                             </div>
                           )}
                         </div>
                       );
                     })}
-                    {modules.length > 0 && unassignedZones.length > 0 && (
+                    {unassignedZones.length > 0 && (
                       <div className="rounded-2xl border-2 border-dashed border-slate-200 overflow-hidden">
                         <div className="px-4 py-3 bg-slate-50 flex items-center gap-2">
                           <div className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
-                          <span className="flex-1 font-black text-sm text-slate-500 tracking-tight">Sin módulo asignado</span>
-                          <span className="text-[8px] font-black text-slate-400 bg-white border border-slate-200 px-2 py-0.5 rounded-full">{unassignedZones.length} zonas</span>
+                          <span className="flex-1 font-black text-sm text-slate-500 tracking-tight">Sin sección asignada</span>
+                          <span className="text-[8px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">⚠ {unassignedZones.length}</span>
                         </div>
                         <div className="px-3 pb-3 pt-1 space-y-2 bg-white">
                           {unassignedZones.map((zone, idx) => renderZoneRow(zone, idx))}
@@ -1293,8 +1303,8 @@ export default function SegurMapApp() {
             onZonesChange={handleZonesChange}
             onDeleteAll={handleDeleteAll}
             onDeleteInspection={handleDeleteInspection}
-            modules={modules}
-            onModulesChange={saveModules}
+            sections={sections}
+            onSectionsChange={saveSections}
           />
         )}
       </main>
@@ -2046,12 +2056,11 @@ function FindingViewModal({ finding, onClose, onImageZoom }: {
 
 
 // ─── Config Page ──────────────────────────────────────────────────────────────
-// IMPORTANT: No local zones state here. Zones live ONLY in parent.
-// All changes go directly through onZonesChange → handleZonesChange → DB.
+// Sections own zones. No independent zones panel.
 function ConfigPage({
   inspectionCount, findingCount, zones,
   onZonesChange, onDeleteAll, inspections, allFindings, onDeleteInspection,
-  modules, onModulesChange,
+  sections, onSectionsChange,
 }: {
   inspectionCount: number;
   findingCount: number;
@@ -2061,143 +2070,127 @@ function ConfigPage({
   inspections: Inspection[];
   allFindings: Finding[];
   onDeleteInspection: (id: string) => Promise<void>;
-  modules: Module[];
-  onModulesChange: (modules: Module[]) => void;
+  sections: Section[];
+  onSectionsChange: (sections: Section[]) => Promise<void>;
 }) {
-  const [newZoneName, setNewZoneName] = useState("");
-  const [zoneToDelete, setZoneToDelete] = useState<Zone | null>(null);
-  const [deleteWord, setDeleteWord] = useState("");
-  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  // ── Section state ──
+  const [newSectionName, setNewSectionName] = useState("");
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [editingSectionName, setEditingSectionName] = useState("");
+  const [sectionToDelete, setSectionToDelete] = useState<Section | null>(null);
+  const [expandedSectionCfgIds, setExpandedSectionCfgIds] = useState<Set<string>>(new Set());
+
+  // ── Zone state (per-section inputs) ──
+  const [newZoneNames, setNewZoneNames] = useState<Record<string, string>>({});
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
   const [editingZoneName, setEditingZoneName] = useState("");
+  const [zoneToDelete, setZoneToDelete] = useState<Zone | null>(null);
+  const [deleteZoneWord, setDeleteZoneWord] = useState("");
+
+  // ── History state ──
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [histDeleteWord, setHistDeleteWord] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isSavingZones, setIsSavingZones] = useState(false);
-  const [lastSaveStatus, setLastSaveStatus] = useState<"idle"|"saving"|"ok"|"error">("idle");
   const [inspToDelete, setInspToDelete] = useState<Inspection | null>(null);
   const [inspDeleteWord, setInspDeleteWord] = useState("");
   const [isDeletingInsp, setIsDeletingInsp] = useState(false);
-  // ── Módulos state ──
-  const [newModuleName, setNewModuleName] = useState("");
-  const [editingModuleId, setEditingModuleId] = useState<string | null>(null);
-  const [editingModuleName, setEditingModuleName] = useState("");
-  const [moduleToDelete, setModuleToDelete] = useState<Module | null>(null);
-  const [expandedModuleCfgIds, setExpandedModuleCfgIds] = useState<Set<string>>(new Set());
-  const [moduleToAssign, setModuleToAssign] = useState<Module | null>(null);
 
-  const selectedZone = zones.find(z => z.id === selectedZoneId) ?? null;
+  // ── Save status ──
+  const [lastSaveStatus, setLastSaveStatus] = useState<"idle"|"saving"|"ok"|"error">("idle");
+  const [isSaving, setIsSaving] = useState(false);
 
-  const toggleModuleCfg = (id: string) => {
-    setExpandedModuleCfgIds(prev => {
+  const toggleSectionCfg = (id: string) => {
+    setExpandedSectionCfgIds(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
 
-  const handleAddModule = () => {
-    if (!newModuleName.trim()) return;
-    const mod: Module = { id: `m${Date.now()}`, name: newModuleName.trim(), zoneIds: [] };
-    onModulesChange([...modules, mod]);
-    setNewModuleName("");
-    setExpandedModuleCfgIds(prev => new Set([...prev, mod.id]));
+  // ── Section handlers ──
+  const handleAddSection = async () => {
+    if (!newSectionName.trim()) return;
+    const sec: Section = { id: `s${Date.now()}`, name: newSectionName.trim(), zoneIds: [] };
+    // Auto-assign unassigned zones to first section if this is the first one being created
+    const assignedIds = new Set(sections.flatMap(s => s.zoneIds));
+    const unassigned = zones.filter(z => !assignedIds.has(z.id));
+    const newSec = sections.length === 0 && unassigned.length > 0
+      ? { ...sec, zoneIds: unassigned.map(z => z.id) }
+      : sec;
+    const updated = [...sections, newSec];
+    setNewSectionName("");
+    setExpandedSectionCfgIds(prev => { const n = new Set(prev); n.add(newSec.id); return n; });
+    setIsSaving(true); setLastSaveStatus("saving");
+    try { await onSectionsChange(updated); setLastSaveStatus("ok"); setTimeout(() => setLastSaveStatus("idle"), 2000); }
+    catch { setLastSaveStatus("error"); } finally { setIsSaving(false); }
   };
 
-  const handleSaveModuleName = (modId: string) => {
-    if (!editingModuleName.trim()) return;
-    onModulesChange(modules.map(m => m.id === modId ? { ...m, name: editingModuleName.trim() } : m));
-    setEditingModuleId(null);
-    setEditingModuleName("");
+  const handleSaveSectionName = async (secId: string) => {
+    if (!editingSectionName.trim()) return;
+    const updated = sections.map(s => s.id === secId ? { ...s, name: editingSectionName.trim() } : s);
+    setEditingSectionId(null); setEditingSectionName("");
+    setIsSaving(true); setLastSaveStatus("saving");
+    try { await onSectionsChange(updated); setLastSaveStatus("ok"); setTimeout(() => setLastSaveStatus("idle"), 2000); }
+    catch { setLastSaveStatus("error"); } finally { setIsSaving(false); }
   };
 
-  const handleDeleteModule = (mod: Module) => {
-    onModulesChange(modules.filter(m => m.id !== mod.id));
-    setModuleToDelete(null);
+  const handleDeleteSection = async (sec: Section) => {
+    const updated = sections.filter(s => s.id !== sec.id);
+    setSectionToDelete(null);
+    setIsSaving(true); setLastSaveStatus("saving");
+    try { await onSectionsChange(updated); setLastSaveStatus("ok"); setTimeout(() => setLastSaveStatus("idle"), 2000); }
+    catch { setLastSaveStatus("error"); } finally { setIsSaving(false); }
   };
 
-  const handleAssignZone = (modId: string, zoneId: string) => {
-    // Remove from any other module first, then add to this one
-    const updated = modules.map(m => ({
-      ...m,
-      zoneIds: m.id === modId
-        ? m.zoneIds.includes(zoneId) ? m.zoneIds : [...m.zoneIds, zoneId]
-        : m.zoneIds.filter(id => id !== zoneId),
-    }));
-    onModulesChange(updated);
-  };
-
-  const handleRemoveZoneFromModule = (modId: string, zoneId: string) => {
-    onModulesChange(modules.map(m => m.id === modId ? { ...m, zoneIds: m.zoneIds.filter(id => id !== zoneId) } : m));
-  };
-
-  const handleConfirmDeleteInspection = async () => {
-    if (!inspToDelete || inspDeleteWord !== "BORRAR") return;
-    setIsDeletingInsp(true);
-    await onDeleteInspection(inspToDelete.id);
-    setIsDeletingInsp(false);
-    setInspToDelete(null);
-    setInspDeleteWord("");
-  };
-
-  // All zone mutations go through this single function
-  const commitZones = async (updated: Zone[]) => {
-    setIsSavingZones(true);
-    setLastSaveStatus("saving");
+  // ── Zone handlers ──
+  const commitZones = async (updated: Zone[], updatedSections?: Section[]) => {
+    setIsSaving(true); setLastSaveStatus("saving");
     try {
-      onZonesChange(updated); // updates parent state immediately
-      setLastSaveStatus("ok");
-      setTimeout(() => setLastSaveStatus("idle"), 2000);
-    } catch {
-      setLastSaveStatus("error");
-    } finally {
-      setIsSavingZones(false);
-    }
+      onZonesChange(updated);
+      if (updatedSections) await onSectionsChange(updatedSections);
+      setLastSaveStatus("ok"); setTimeout(() => setLastSaveStatus("idle"), 2000);
+    } catch { setLastSaveStatus("error"); } finally { setIsSaving(false); }
   };
 
-  const handleAddZone = async () => {
-    if (!newZoneName.trim()) return;
-    const newZone: Zone = {
-      id: `z${Date.now()}`,
-      name: newZoneName.trim(),
-      status: "PENDING",
-      x: 10, y: 10, width: 25, height: 25,
-      findings: {},
-    };
-    const updated = [...zones, newZone];
-    setNewZoneName("");
-    setSelectedZoneId(newZone.id);
-    await commitZones(updated);
+  const handleAddZoneToSection = async (secId: string) => {
+    const name = (newZoneNames[secId] || "").trim();
+    if (!name) return;
+    const newZone: Zone = { id: `z${Date.now()}`, name, status: "PENDING", x: 10, y: 10, width: 25, height: 25, findings: {} };
+    const updatedZones = [...zones, newZone];
+    const updatedSections = sections.map(s => s.id === secId ? { ...s, zoneIds: [...s.zoneIds, newZone.id] } : s);
+    setNewZoneNames(prev => ({ ...prev, [secId]: "" }));
+    await commitZones(updatedZones, updatedSections);
   };
 
   const handleSaveZoneName = async (zoneId: string) => {
     if (!editingZoneName.trim()) return;
     const updated = zones.map(z => z.id === zoneId ? { ...z, name: editingZoneName.trim() } : z);
-    setEditingZoneId(null);
-    setEditingZoneName("");
+    setEditingZoneId(null); setEditingZoneName("");
     await commitZones(updated);
   };
 
   const handleConfirmDeleteZone = async () => {
-    if (!zoneToDelete || deleteWord !== "BORRAR") return;
-    const updated = zones.filter(z => z.id !== zoneToDelete.id);
-    if (selectedZoneId === zoneToDelete.id) setSelectedZoneId(null);
-    setZoneToDelete(null);
-    setDeleteWord("");
-    await commitZones(updated);
+    if (!zoneToDelete || deleteZoneWord !== "BORRAR") return;
+    const updatedZones = zones.filter(z => z.id !== zoneToDelete.id);
+    const updatedSections = sections.map(s => ({ ...s, zoneIds: s.zoneIds.filter(id => id !== zoneToDelete.id) }));
+    setZoneToDelete(null); setDeleteZoneWord("");
+    await commitZones(updatedZones, updatedSections);
+  };
+
+  // ── History handlers ──
+  const handleConfirmDeleteInspection = async () => {
+    if (!inspToDelete || inspDeleteWord !== "BORRAR") return;
+    setIsDeletingInsp(true);
+    await onDeleteInspection(inspToDelete.id);
+    setIsDeletingInsp(false); setInspToDelete(null); setInspDeleteWord("");
   };
 
   const handleConfirmDeleteHistory = async () => {
     if (histDeleteWord !== "BORRAR") return;
     setIsDeleting(true);
     await onDeleteAll();
-    setIsDeleting(false);
-    setShowDeleteConfirm(false);
-    setHistDeleteWord("");
+    setIsDeleting(false); setShowDeleteConfirm(false); setHistDeleteWord("");
   };
-
-
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
@@ -2205,16 +2198,11 @@ function ConfigPage({
         <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">Configuración</h2>
         {lastSaveStatus === "saving" && (
           <span className="text-[10px] font-black text-blue-500 uppercase flex items-center gap-1">
-            <span className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin inline-block"/>
-            Guardando...
+            <span className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin inline-block"/>Guardando...
           </span>
         )}
-        {lastSaveStatus === "ok" && (
-          <span className="text-[10px] font-black text-green-600 uppercase">✓ Guardado</span>
-        )}
-        {lastSaveStatus === "error" && (
-          <span className="text-[10px] font-black text-red-600 uppercase">✕ Error al guardar</span>
-        )}
+        {lastSaveStatus === "ok" && <span className="text-[10px] font-black text-green-600 uppercase">✓ Guardado</span>}
+        {lastSaveStatus === "error" && <span className="text-[10px] font-black text-red-600 uppercase">✕ Error al guardar</span>}
       </div>
 
       {/* Stats */}
@@ -2229,7 +2217,7 @@ function ConfigPage({
         </div>
       </div>
 
-      {/* ── Módulos ── */}
+      {/* ── Secciones + Zonas anidadas ── */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center gap-3">
           <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center">
@@ -2238,77 +2226,75 @@ function ConfigPage({
             </svg>
           </div>
           <div>
-            <h3 className="font-black text-slate-800 text-sm">Módulos</h3>
-            <p className="text-[9px] text-slate-400 font-bold uppercase">Crear · renombrar · eliminar · asignar zonas</p>
+            <h3 className="font-black text-slate-800 text-sm">Secciones y Zonas</h3>
+            <p className="text-[9px] text-slate-400 font-bold uppercase">Crear secciones · agregar zonas dentro de cada sección</p>
           </div>
         </div>
         <div className="p-4 space-y-3">
-          {/* Crear módulo */}
+          {/* Crear sección */}
           <div className="flex gap-2">
             <input
-              value={newModuleName}
-              onChange={e => setNewModuleName(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleAddModule()}
-              placeholder="Nombre del nuevo módulo..."
+              value={newSectionName}
+              onChange={e => setNewSectionName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleAddSection()}
+              placeholder="Nombre de la nueva sección..."
               className="flex-1 px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-medium focus:border-indigo-500 outline-none transition-all"
             />
             <button
-              onClick={handleAddModule}
-              disabled={!newModuleName.trim()}
-              className={`px-3 py-2 rounded-xl font-black text-xs uppercase transition-all ${newModuleName.trim() ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow" : "bg-slate-100 text-slate-300"}`}
+              onClick={handleAddSection}
+              disabled={!newSectionName.trim() || isSaving}
+              className={`px-3 py-2 rounded-xl font-black text-xs uppercase transition-all ${newSectionName.trim() && !isSaving ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow" : "bg-slate-100 text-slate-300"}`}
             >
               + ADD
             </button>
           </div>
 
-          {modules.length === 0 && (
-            <p className="text-center text-slate-400 text-xs py-3 font-bold uppercase">Sin módulos creados. Agrega el primero.</p>
+          {sections.length === 0 && (
+            <p className="text-center text-slate-400 text-xs py-3 font-bold uppercase">Sin secciones creadas. Agrega la primera.</p>
           )}
 
           <div className="space-y-2">
-            {modules.map(mod => {
-              const isExpanded = expandedModuleCfgIds.has(mod.id);
-              const isEditing = editingModuleId === mod.id;
-              const modZones = mod.zoneIds.map(id => zones.find(z => z.id === id)).filter(Boolean) as Zone[];
-              const assignedIds = new Set(modules.flatMap(m => m.zoneIds));
-              const availableZones = zones.filter(z => !assignedIds.has(z.id));
+            {sections.map(sec => {
+              const isExpanded = expandedSectionCfgIds.has(sec.id);
+              const isEditing  = editingSectionId === sec.id;
+              const secZones   = sec.zoneIds.map(id => zones.find(z => z.id === id)).filter(Boolean) as Zone[];
               return (
-                <div key={mod.id} className="border-2 border-slate-100 rounded-xl overflow-hidden">
-                  {/* Cabecera del módulo */}
+                <div key={sec.id} className="border-2 border-indigo-100 rounded-xl overflow-hidden">
+                  {/* Cabecera sección */}
                   <div
-                    className="flex items-center justify-between px-3 py-2 bg-indigo-50/60 cursor-pointer hover:bg-indigo-50"
-                    onClick={() => !isEditing && toggleModuleCfg(mod.id)}
+                    className="flex items-center justify-between px-3 py-2.5 bg-indigo-50/70 cursor-pointer hover:bg-indigo-50"
+                    onClick={() => !isEditing && toggleSectionCfg(sec.id)}
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 shrink-0" />
                       {isEditing ? (
                         <input
                           autoFocus
-                          value={editingModuleName}
-                          onChange={e => setEditingModuleName(e.target.value)}
-                          onKeyDown={e => { if (e.key === "Enter") handleSaveModuleName(mod.id); if (e.key === "Escape") setEditingModuleId(null); }}
+                          value={editingSectionName}
+                          onChange={e => setEditingSectionName(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") handleSaveSectionName(sec.id); if (e.key === "Escape") setEditingSectionId(null); }}
                           onClick={e => e.stopPropagation()}
                           className="flex-1 px-2 py-0.5 text-xs font-black bg-white border-2 border-indigo-400 rounded-lg outline-none min-w-0"
                         />
                       ) : (
-                        <span className="font-black text-slate-800 text-xs truncate">{mod.name}</span>
+                        <span className="font-black text-slate-800 text-xs truncate">{sec.name}</span>
                       )}
-                      <span className="text-[7px] bg-indigo-100 text-indigo-500 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0">{mod.zoneIds.length} zonas</span>
+                      <span className="text-[7px] bg-indigo-100 text-indigo-500 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0">{sec.zoneIds.length} zonas</span>
                     </div>
                     <div className="flex items-center gap-1 ml-2 shrink-0" onClick={e => e.stopPropagation()}>
                       {isEditing ? (
                         <>
-                          <button onClick={() => handleSaveModuleName(mod.id)} className="px-2 h-6 bg-green-600 text-white rounded-md font-black text-[8px] hover:bg-green-700">✓</button>
-                          <button onClick={() => setEditingModuleId(null)} className="px-2 h-6 bg-slate-200 text-slate-600 rounded-md font-black text-[8px]">✕</button>
+                          <button onClick={() => handleSaveSectionName(sec.id)} className="px-2 h-6 bg-green-600 text-white rounded-md font-black text-[8px] hover:bg-green-700">✓</button>
+                          <button onClick={() => setEditingSectionId(null)} className="px-2 h-6 bg-slate-200 text-slate-600 rounded-md font-black text-[8px]">✕</button>
                         </>
                       ) : (
                         <>
-                          <button onClick={() => { setEditingModuleId(mod.id); setEditingModuleName(mod.name); }} className="w-6 h-6 bg-blue-50 text-blue-500 rounded-md flex items-center justify-center hover:bg-blue-100" title="Renombrar">
+                          <button onClick={() => { setEditingSectionId(sec.id); setEditingSectionName(sec.name); }} className="w-6 h-6 bg-blue-50 text-blue-500 rounded-md flex items-center justify-center hover:bg-blue-100" title="Renombrar">
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                             </svg>
                           </button>
-                          <button onClick={() => setModuleToDelete(mod)} className="w-6 h-6 bg-red-50 text-red-500 rounded-md flex items-center justify-center text-[10px] hover:bg-red-100 font-black">✕</button>
+                          <button onClick={() => setSectionToDelete(sec)} className="w-6 h-6 bg-red-50 text-red-500 rounded-md flex items-center justify-center text-[10px] hover:bg-red-100 font-black">✕</button>
                           <svg className={`w-4 h-4 text-slate-400 transition-transform ml-1 ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                           </svg>
@@ -2317,238 +2303,95 @@ function ConfigPage({
                     </div>
                   </div>
 
-                  {/* Contenido expandido */}
+                  {/* Contenido: zonas + input nueva zona */}
                   {isExpanded && (
-                    <div className="px-3 pb-3 pt-2 bg-white space-y-2">
-                      {/* Zonas asignadas */}
-                      {modZones.length === 0
-                        ? <p className="text-xs text-slate-400 text-center py-2 font-bold uppercase">Sin zonas asignadas</p>
-                        : modZones.map(z => (
-                          <div key={z.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-50 border border-slate-100 rounded-lg">
-                            <div className={`w-2 h-2 rounded-full shrink-0 ${z.status === "OK" ? "bg-green-500" : z.status === "ISSUE" ? "bg-red-500" : "bg-slate-300"}`} />
-                            <span className="flex-1 font-black text-xs text-slate-700 truncate">{z.name}</span>
-                            <span className="text-[7px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full font-black uppercase">{z.status}</span>
-                            <button
-                              onClick={() => handleRemoveZoneFromModule(mod.id, z.id)}
-                              className="w-5 h-5 bg-red-50 text-red-400 rounded flex items-center justify-center text-[9px] hover:bg-red-100 font-black shrink-0"
-                              title="Quitar del módulo"
-                            >✕</button>
-                          </div>
-                        ))
-                      }
-                      {/* Botón agregar zona */}
-                      {availableZones.length > 0 && (
-                        <div className="relative">
-                          <button
-                            onClick={() => setModuleToAssign(moduleToAssign?.id === mod.id ? null : mod)}
-                            className="w-full flex items-center justify-center gap-1.5 py-2 border-2 border-dashed border-indigo-200 rounded-lg text-indigo-500 hover:border-indigo-400 hover:bg-indigo-50 transition-all text-[10px] font-black uppercase"
-                          >
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
-                            </svg>
-                            Agregar zona
-                          </button>
-                          {moduleToAssign?.id === mod.id && (
-                            <div className="mt-1.5 bg-white border-2 border-indigo-200 rounded-xl overflow-hidden shadow-lg z-10">
-                              {availableZones.map(z => (
-                                <button
-                                  key={z.id}
-                                  onClick={() => { handleAssignZone(mod.id, z.id); setModuleToAssign(null); }}
-                                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-indigo-50 transition-all text-left border-b border-slate-50 last:border-0"
-                                >
-                                  <div className={`w-2 h-2 rounded-full shrink-0 ${z.status === "OK" ? "bg-green-500" : z.status === "ISSUE" ? "bg-red-500" : "bg-slate-300"}`} />
-                                  <span className="text-xs font-black text-slate-700">{z.name}</span>
-                                </button>
-                              ))}
+                    <div className="px-3 pb-3 pt-2 bg-white space-y-1.5">
+                      {/* Lista de zonas de esta sección */}
+                      {secZones.map(zone => {
+                        const isEditingZone = editingZoneId === zone.id;
+                        return (
+                          <div key={zone.id} className="border-2 border-slate-100 rounded-xl overflow-hidden">
+                            <div className="flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-white transition-all">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <div className={`w-2 h-2 rounded-full shrink-0 ${zone.status === "OK" ? "bg-green-500" : zone.status === "ISSUE" ? "bg-red-500" : "bg-slate-300"}`} />
+                                {isEditingZone ? (
+                                  <input autoFocus value={editingZoneName}
+                                    onChange={e => setEditingZoneName(e.target.value)}
+                                    onKeyDown={e => { if (e.key === "Enter") handleSaveZoneName(zone.id); if (e.key === "Escape") setEditingZoneId(null); }}
+                                    className="flex-1 px-2 py-0.5 text-xs font-black bg-white border-2 border-blue-400 rounded-lg outline-none min-w-0" />
+                                ) : (
+                                  <span className="font-black text-slate-800 text-xs truncate">{zone.name}</span>
+                                )}
+                                <span className="text-[7px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0">{zone.status}</span>
+                              </div>
+                              <div className="flex items-center gap-1 ml-2 shrink-0">
+                                {isEditingZone ? (
+                                  <>
+                                    <button onClick={() => handleSaveZoneName(zone.id)} className="px-2 h-6 bg-green-600 text-white rounded-md font-black text-[8px] hover:bg-green-700">✓</button>
+                                    <button onClick={() => setEditingZoneId(null)} className="px-2 h-6 bg-slate-200 text-slate-600 rounded-md font-black text-[8px]">✕</button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button onClick={() => { setEditingZoneId(zone.id); setEditingZoneName(zone.name); }} className="w-6 h-6 bg-blue-50 text-blue-500 rounded-md flex items-center justify-center hover:bg-blue-100" title="Renombrar">
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                      </svg>
+                                    </button>
+                                    <button onClick={() => { setZoneToDelete(zone); setDeleteZoneWord(""); }} className="w-6 h-6 bg-red-50 text-red-500 rounded-md flex items-center justify-center text-[10px] hover:bg-red-100 font-black">✕</button>
+                                  </>
+                                )}
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      )}
+                          </div>
+                        );
+                      })}
+
+                      {/* Input para agregar zona a esta sección */}
+                      <div className="flex gap-2 pt-1">
+                        <input
+                          value={newZoneNames[sec.id] || ""}
+                          onChange={e => setNewZoneNames(prev => ({ ...prev, [sec.id]: e.target.value }))}
+                          onKeyDown={e => e.key === "Enter" && handleAddZoneToSection(sec.id)}
+                          placeholder="Nueva zona en esta sección..."
+                          className="flex-1 px-3 py-1.5 bg-slate-50 border-2 border-slate-200 rounded-xl text-xs font-medium focus:border-indigo-400 outline-none transition-all"
+                        />
+                        <button
+                          onClick={() => handleAddZoneToSection(sec.id)}
+                          disabled={!(newZoneNames[sec.id] || "").trim() || isSaving}
+                          className={`px-3 py-1.5 rounded-xl font-black text-[10px] uppercase transition-all ${(newZoneNames[sec.id] || "").trim() && !isSaving ? "bg-slate-900 text-white hover:bg-black shadow" : "bg-slate-100 text-slate-300"}`}
+                        >
+                          + Zona
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
               );
             })}
           </div>
-        </div>
-      </div>
 
-      {/* Modal eliminar módulo */}
-      {moduleToDelete && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xs border-4 border-red-200 overflow-hidden">
-            <div className="p-5 bg-red-600 text-white text-center">
-              <p className="text-3xl mb-1">⚠️</p>
-              <h3 className="text-lg font-black">¿Eliminar módulo?</h3>
-              <p className="text-red-100 text-xs mt-1 font-bold">"{moduleToDelete.name}"</p>
-            </div>
-            <div className="p-4 text-center">
-              <p className="text-xs text-slate-500">Las zonas asignadas no se eliminarán, solo se desagruparán.</p>
-            </div>
-            <div className="px-4 pb-4 flex gap-2">
-              <button onClick={() => setModuleToDelete(null)} className="flex-1 py-2.5 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500">CANCELAR</button>
-              <button onClick={() => handleDeleteModule(moduleToDelete)} className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 shadow">ELIMINAR</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Zonas de Inspección ── */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex items-center gap-3">
-          <div className="w-8 h-8 bg-violet-100 rounded-xl flex items-center justify-center">
-            <svg className="w-4 h-4 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
-          </div>
-          <div>
-            <h3 className="font-black text-slate-800 text-sm">Zonas de Inspección</h3>
-            <p className="text-[9px] text-slate-400 font-bold uppercase">Crear · renombrar · eliminar · agrupadas por módulo</p>
-          </div>
-        </div>
-        <div className="p-4 space-y-3">
-          {/* Input para agregar nueva zona */}
-          <div className="flex gap-2">
-            <input value={newZoneName} onChange={e => setNewZoneName(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleAddZone()}
-              placeholder="Nombre de nueva zona..."
-              className="flex-1 px-3 py-2 bg-slate-50 border-2 border-slate-200 rounded-xl text-sm font-medium focus:border-blue-500 outline-none transition-all" />
-            <button onClick={handleAddZone} disabled={!newZoneName.trim() || isSavingZones}
-              className={`px-3 py-2 rounded-xl font-black text-xs uppercase transition-all ${newZoneName.trim() && !isSavingZones ? "bg-slate-900 text-white hover:bg-black shadow" : "bg-slate-100 text-slate-300"}`}>
-              + ADD
-            </button>
-          </div>
-
-          {/* Helper de zona — función reutilizable */}
+          {/* Zonas sin sección (sólo si existen) */}
           {(() => {
-            const renderZoneItem = (zone: Zone) => {
-              const isSelected = selectedZoneId === zone.id;
-              const isEditing = editingZoneId === zone.id;
-              return (
-                <div key={zone.id} className={`border-2 rounded-xl overflow-hidden ${isSelected ? "border-orange-300" : "border-slate-100"}`}>
-                  <div
-                    className={`flex items-center justify-between px-3 py-2 cursor-pointer ${isSelected ? "bg-orange-50" : "hover:bg-slate-50"}`}
-                    onClick={() => !isEditing && setSelectedZoneId(isSelected ? null : zone.id)}
-                  >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${zone.status === "OK" ? "bg-green-500" : zone.status === "ISSUE" ? "bg-red-500" : "bg-slate-300"}`} />
-                      {isEditing ? (
-                        <input autoFocus value={editingZoneName}
-                          onChange={e => setEditingZoneName(e.target.value)}
-                          onKeyDown={e => { if (e.key === "Enter") handleSaveZoneName(zone.id); if (e.key === "Escape") setEditingZoneId(null); }}
-                          onClick={e => e.stopPropagation()}
-                          className="flex-1 px-2 py-0.5 text-xs font-black bg-white border-2 border-blue-400 rounded-lg outline-none min-w-0" />
-                      ) : (
-                        <span className="font-black text-slate-800 text-xs truncate">{zone.name}</span>
-                      )}
-                      <span className="text-[7px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0">{zone.status}</span>
-                    </div>
-                    <div className="flex items-center gap-1 ml-2 shrink-0">
-                      {isEditing ? (
-                        <>
-                          <button onClick={e => { e.stopPropagation(); handleSaveZoneName(zone.id); }}
-                            className="px-2 h-6 bg-green-600 text-white rounded-md font-black text-[8px] hover:bg-green-700">✓</button>
-                          <button onClick={e => { e.stopPropagation(); setEditingZoneId(null); }}
-                            className="px-2 h-6 bg-slate-200 text-slate-600 rounded-md font-black text-[8px]">✕</button>
-                        </>
-                      ) : (
-                        <>
-                          <button onClick={e => { e.stopPropagation(); setEditingZoneId(zone.id); setEditingZoneName(zone.name); }}
-                            className="w-6 h-6 bg-blue-50 text-blue-500 rounded-md flex items-center justify-center hover:bg-blue-100" title="Renombrar">
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                            </svg>
-                          </button>
-                          <button onClick={e => { e.stopPropagation(); setZoneToDelete(zone); setDeleteWord(""); }}
-                            className="w-6 h-6 bg-red-50 text-red-500 rounded-md flex items-center justify-center text-[10px] hover:bg-red-100 font-black">✕</button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            };
-
-            const assignedZoneIds = new Set(modules.flatMap(m => m.zoneIds));
-            const unassignedZones = zones.filter(z => !assignedZoneIds.has(z.id));
-
-            // Sin módulos: lista plana como antes
-            if (modules.length === 0) {
-              return (
-                <div className="space-y-1.5">
-                  {zones.length === 0
-                    ? <p className="text-center text-slate-400 text-xs py-3 font-bold uppercase">Sin zonas creadas</p>
-                    : zones.map(z => renderZoneItem(z))
-                  }
-                </div>
-              );
-            }
-
-            // Con módulos: agrupado por módulo + bloque de sin módulo si hay
+            const assignedIds = new Set(sections.flatMap(s => s.zoneIds));
+            const unassigned  = zones.filter(z => !assignedIds.has(z.id));
+            if (unassigned.length === 0) return null;
             return (
-              <div className="space-y-2">
-                {modules.map(mod => {
-                  const modZones = mod.zoneIds.map(id => zones.find(z => z.id === id)).filter(Boolean) as Zone[];
-                  const isExpCfg = expandedModuleCfgIds.has(`zones_${mod.id}`);
-                  return (
-                    <div key={mod.id} className="border-2 border-violet-100 rounded-xl overflow-hidden">
-                      <button
-                        onClick={() => {
-                          setExpandedModuleCfgIds(prev => {
-                            const next = new Set(prev);
-                            const key = `zones_${mod.id}`;
-                            if (next.has(key)) next.delete(key); else next.add(key);
-                            return next;
-                          });
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-2.5 bg-violet-50/70 hover:bg-violet-50 text-left transition-all"
-                      >
-                        <div className="w-2 h-2 rounded-full bg-violet-400 shrink-0" />
-                        <span className="flex-1 font-black text-slate-800 text-xs tracking-tight">{mod.name}</span>
-                        <span className="text-[7px] bg-violet-100 text-violet-500 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0">{modZones.length} zonas</span>
-                        <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform ml-1 shrink-0 ${isExpCfg ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-                      {isExpCfg && (
-                        <div className="px-2 pb-2 pt-1 space-y-1.5 bg-white">
-                          {modZones.length === 0
-                            ? <p className="text-center text-slate-400 text-[10px] py-2 font-bold uppercase">Sin zonas en este módulo</p>
-                            : modZones.map(z => renderZoneItem(z))
-                          }
-                        </div>
-                      )}
+              <div className="border-2 border-dashed border-amber-200 rounded-xl overflow-hidden mt-2">
+                <div className="px-3 py-2 bg-amber-50 flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                  <span className="flex-1 font-black text-amber-700 text-xs">Sin sección asignada</span>
+                  <span className="text-[7px] font-black bg-amber-100 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded-full uppercase">⚠ {unassigned.length}</span>
+                </div>
+                <div className="px-3 pb-2 pt-1.5 bg-white space-y-1.5">
+                  {unassigned.map(zone => (
+                    <div key={zone.id} className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-100 rounded-lg">
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${zone.status === "OK" ? "bg-green-500" : zone.status === "ISSUE" ? "bg-red-500" : "bg-slate-300"}`} />
+                      <span className="flex-1 text-xs font-black text-slate-700 truncate">{zone.name}</span>
+                      <span className="text-[7px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded-full font-black uppercase">{zone.status}</span>
                     </div>
-                  );
-                })}
-
-                {/* Zonas sin módulo */}
-                {unassignedZones.length > 0 && (
-                  <div className="border-2 border-dashed border-slate-200 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => {
-                        setExpandedModuleCfgIds(prev => {
-                          const next = new Set(prev);
-                          if (next.has("zones_unassigned")) next.delete("zones_unassigned"); else next.add("zones_unassigned");
-                          return next;
-                        });
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 bg-slate-50 hover:bg-slate-100 text-left transition-all"
-                    >
-                      <div className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
-                      <span className="flex-1 font-black text-slate-500 text-xs tracking-tight">Sin módulo asignado</span>
-                      <span className="text-[7px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-black uppercase shrink-0 border border-amber-200">⚠ {unassignedZones.length}</span>
-                      <svg className={`w-3.5 h-3.5 text-slate-400 transition-transform ml-1 shrink-0 ${expandedModuleCfgIds.has("zones_unassigned") ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                    {expandedModuleCfgIds.has("zones_unassigned") && (
-                      <div className="px-2 pb-2 pt-1 space-y-1.5 bg-white">
-                        {unassignedZones.map(z => renderZoneItem(z))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                  ))}
+                  <p className="text-[9px] text-amber-600 font-bold text-center py-1">Asigna estas zonas a una sección desde la sección correspondiente</p>
+                </div>
               </div>
             );
           })()}
@@ -2602,35 +2445,24 @@ function ConfigPage({
                 const closedCount = inspFindings.filter(f => f.is_closed === true || (f as any).is_closed === "true").length;
                 return (
                   <div key={insp.id} className="flex items-center gap-3 px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl">
-                    {/* Fecha */}
                     <div className="bg-slate-800 rounded-lg px-2 py-1 text-center shrink-0 min-w-[36px]">
                       <p className="text-[7px] font-black text-slate-400 uppercase leading-none">
                         {new Date(insp.created_at).toLocaleString("default", { month: "short" })}
                       </p>
                       <p className="text-sm font-black text-white leading-tight">{new Date(insp.created_at).getDate()}</p>
                     </div>
-                    {/* Info */}
                     <div className="flex-1 min-w-0">
                       <p className="font-black text-slate-800 text-xs truncate">{insp.title}</p>
                       <p className="text-[9px] text-slate-400 font-bold uppercase truncate">{insp.inspector} · {insp.location}</p>
                     </div>
-                    {/* Badges */}
                     <div className="flex items-center gap-1 shrink-0">
-                      {openCount > 0 && (
-                        <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100">{openCount} ab.</span>
-                      )}
-                      {closedCount > 0 && (
-                        <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-100">{closedCount} ok</span>
-                      )}
-                      {inspFindings.length === 0 && (
-                        <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400">sin hall.</span>
-                      )}
+                      {openCount > 0 && <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100">{openCount} ab.</span>}
+                      {closedCount > 0 && <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-100">{closedCount} ok</span>}
+                      {inspFindings.length === 0 && <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400">sin hall.</span>}
                     </div>
-                    {/* Botón eliminar */}
                     <button
                       onClick={() => { setInspToDelete(insp); setInspDeleteWord(""); }}
                       className="shrink-0 w-7 h-7 bg-red-50 text-red-500 border border-red-100 rounded-lg flex items-center justify-center hover:bg-red-100 transition-all"
-                      title="Eliminar esta auditoría"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -2654,31 +2486,20 @@ function ConfigPage({
               <p className="text-red-100 text-sm mt-1 font-bold truncate px-4">"{inspToDelete.title}"</p>
             </div>
             <div className="p-6 space-y-4">
-              <p className="text-xs text-slate-500 text-center">
-                Se eliminarán todos los hallazgos e imágenes asociados a esta auditoría.
-              </p>
+              <p className="text-xs text-slate-500 text-center">Se eliminarán todos los hallazgos e imágenes asociados.</p>
               <div>
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 text-center">
                   Escribe <span className="text-red-600 font-black">BORRAR</span> para confirmar
                 </label>
-                <input
-                  value={inspDeleteWord}
-                  onChange={e => setInspDeleteWord(e.target.value)}
-                  placeholder="BORRAR"
-                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none"
-                />
+                <input value={inspDeleteWord} onChange={e => setInspDeleteWord(e.target.value)} placeholder="BORRAR"
+                  className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none" />
               </div>
             </div>
             <div className="p-6 pt-0 flex gap-3">
-              <button
-                onClick={() => { setInspToDelete(null); setInspDeleteWord(""); }}
-                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500"
-              >CANCELAR</button>
-              <button
-                disabled={inspDeleteWord !== "BORRAR" || isDeletingInsp}
-                onClick={handleConfirmDeleteInspection}
-                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white ${inspDeleteWord === "BORRAR" && !isDeletingInsp ? "bg-red-600 hover:bg-red-700" : "bg-slate-300"}`}
-              >
+              <button onClick={() => { setInspToDelete(null); setInspDeleteWord(""); }}
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500">CANCELAR</button>
+              <button disabled={inspDeleteWord !== "BORRAR" || isDeletingInsp} onClick={handleConfirmDeleteInspection}
+                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white ${inspDeleteWord === "BORRAR" && !isDeletingInsp ? "bg-red-600 hover:bg-red-700" : "bg-slate-300"}`}>
                 {isDeletingInsp ? "ELIMINANDO..." : "ELIMINAR"}
               </button>
             </div>
@@ -2686,7 +2507,27 @@ function ConfigPage({
         </div>
       )}
 
-      {/* Modal borrar zona */}
+      {/* Modal eliminar sección */}
+      {sectionToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xs border-4 border-red-200 overflow-hidden">
+            <div className="p-5 bg-red-600 text-white text-center">
+              <p className="text-3xl mb-1">⚠️</p>
+              <h3 className="text-lg font-black">¿Eliminar sección?</h3>
+              <p className="text-red-100 text-xs mt-1 font-bold">"{sectionToDelete.name}"</p>
+            </div>
+            <div className="p-4 text-center">
+              <p className="text-xs text-slate-500">Las zonas asignadas no se eliminarán, solo se desagruparán.</p>
+            </div>
+            <div className="px-4 pb-4 flex gap-2">
+              <button onClick={() => setSectionToDelete(null)} className="flex-1 py-2.5 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500">CANCELAR</button>
+              <button onClick={() => handleDeleteSection(sectionToDelete)} className="flex-1 py-2.5 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 shadow">ELIMINAR</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal eliminar zona */}
       {zoneToDelete && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur flex items-center justify-center z-[300] p-4">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-red-200 overflow-hidden">
@@ -2700,15 +2541,15 @@ function ConfigPage({
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 text-center">
                   Escribe <span className="text-red-600 font-black">BORRAR</span> para confirmar
                 </label>
-                <input value={deleteWord} onChange={e => setDeleteWord(e.target.value)} placeholder="BORRAR"
+                <input value={deleteZoneWord} onChange={e => setDeleteZoneWord(e.target.value)} placeholder="BORRAR"
                   className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-xl text-center font-black text-lg tracking-widest focus:border-red-400 outline-none" />
               </div>
             </div>
             <div className="p-6 pt-0 flex gap-3">
-              <button onClick={() => { setZoneToDelete(null); setDeleteWord(""); }}
+              <button onClick={() => { setZoneToDelete(null); setDeleteZoneWord(""); }}
                 className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500">CANCELAR</button>
-              <button disabled={deleteWord !== "BORRAR"} onClick={handleConfirmDeleteZone}
-                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white ${deleteWord === "BORRAR" ? "bg-red-600 hover:bg-red-700" : "bg-slate-300"}`}>
+              <button disabled={deleteZoneWord !== "BORRAR"} onClick={handleConfirmDeleteZone}
+                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase text-white ${deleteZoneWord === "BORRAR" ? "bg-red-600 hover:bg-red-700" : "bg-slate-300"}`}>
                 ELIMINAR
               </button>
             </div>
