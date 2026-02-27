@@ -458,7 +458,6 @@ export default function SegurMapApp() {
     setIsFinishing(true);
 
     // ── Paso 1: jalar el estado más fresco de la DB antes de cerrar ──────────
-    // Otros dispositivos pueden haber subido hallazgos desde que este abrió la app.
     let freshFindings: Finding[] = allFindings;
     let freshZonesData = zones;
     try {
@@ -473,11 +472,8 @@ export default function SegurMapApp() {
       if (Array.isArray(freshInsData)) {
         const freshActive = freshInsData.find((i: any) => i.id === currentInspection.id);
         if (freshActive?.zones_data && Array.isArray(freshActive.zones_data)) {
-          // Merge: mantener status local (este dispositivo evaluó zonas),
-          // pero incorporar zones del servidor que estén más completas
           freshZonesData = freshActive.zones_data.map((serverZone: any) => {
             const localZone = zones.find(z => z.id === serverZone.id);
-            // Si la zona local tiene status evaluado, prevalece; si no, usar servidor
             if (localZone && localZone.status !== "PENDING") return localZone;
             return serverZone;
           });
@@ -485,36 +481,141 @@ export default function SegurMapApp() {
       }
     } catch { /* si falla la recarga, continúa con estado local */ }
 
-    // ── Paso 2: construir resumen con datos frescos ──────────────────────────
-    const issueZones = freshZonesData.filter(z => z.status === "ISSUE");
+    const findingsForInspection = freshFindings.filter(f => f.inspection_id === currentInspection.id);
     const okZones = freshZonesData.filter(z => z.status === "OK");
-    const findingsForSummary = freshFindings.filter(f => f.inspection_id === currentInspection.id);
-
+    const issueZones = freshZonesData.filter(z => z.status === "ISSUE");
     const pendingZonesCount = freshZonesData.filter(z => z.status === "PENDING").length;
+
+    // Fallback summary — usado si la IA falla
     let summary = `Inspección completada el ${new Date().toLocaleDateString()}. ${okZones.length} zona${okZones.length !== 1 ? "s" : ""} sin hallazgos, ${issueZones.length} con hallazgos que requieren atención${pendingZonesCount > 0 ? `, ${pendingZonesCount} sin evaluar` : ""}.`;
 
-    if (findingsForSummary.length > 0) {
+    // ── Paso 2: IA — Prompt 1: análisis y corrección por hallazgo ────────────
+    // Solo texto, sin fotos. Blindado: si falla, continúa con datos originales.
+    let updatedFindingsFromAI: Array<{ id: string; ai_analysis: string }> = [];
+
+    if (findingsForInspection.length > 0) {
       try {
-        const findingsList = findingsForSummary
-          .map(f => `- [${f.zone_name || "Sin zona"}] ${f.item_label}: ${f.description}`)
-          .join("\n");
-        const zonesContext = pendingZonesCount > 0
-          ? `\nZonas evaluadas: ${okZones.length + issueZones.length} de ${freshZonesData.length} (${pendingZonesCount} sin evaluar).`
-          : `\nTodas las zonas fueron evaluadas (${freshZonesData.length} en total).`;
-        const prompt = `Eres un experto en seguridad industrial. Genera un resumen ejecutivo breve (3-4 oraciones en español) de esta inspección de seguridad:\n${findingsList}${zonesContext}\nIncluye las áreas de mayor riesgo y recomendaciones generales.`;
-        const aiRes = await fetch("/api/ai", {
+        const findingsList = findingsForInspection.map((f, idx) =>
+          `[${idx + 1}] Zona: ${f.zone_name || "Sin zona"} | Hallazgo: ${f.item_label} | Descripción: ${f.description} | Severidad: ${f.severity}`
+        ).join("\n");
+
+        const prompt1 = `Eres un experto en seguridad industrial e higiene ocupacional. Analiza los siguientes hallazgos de una inspección de seguridad en planta.
+
+Para CADA hallazgo devuelve un objeto JSON con exactamente estos campos:
+- "idx": número del hallazgo (mismo que el número entre corchetes)
+- "correccion": corrección ortográfica y de redacción de la descripción original (solo corrige errores, conserva el sentido original, máximo 2 oraciones en español)
+- "recomendacion": recomendación técnica específica de solución para ese hallazgo (máximo 2 oraciones en español, enfocada en la acción correctiva)
+
+Responde ÚNICAMENTE con un array JSON válido, sin texto adicional, sin markdown, sin bloques de código. Ejemplo de formato esperado:
+[{"idx":1,"correccion":"texto corregido","recomendacion":"acción técnica recomendada"},{"idx":2,"correccion":"...","recomendacion":"..."}]
+
+HALLAZGOS A ANALIZAR:
+${findingsList}`;
+
+        const res1 = await fetch("/api/ai", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
+          body: JSON.stringify({ prompt: prompt1 }),
         });
-        if (aiRes.ok) {
-          const aiData = await aiRes.json();
-          if (aiData.text) summary = aiData.text;
+
+        if (res1.ok) {
+          const data1 = await res1.json();
+          if (data1.text) {
+            try {
+              // Limpiar posibles backticks o markdown que Gemini pueda agregar
+              const clean = data1.text.replace(/```json|```/g, "").trim();
+              const parsed: Array<{ idx: number; correccion: string; recomendacion: string }> = JSON.parse(clean);
+              if (Array.isArray(parsed)) {
+                updatedFindingsFromAI = parsed
+                  .filter(item => item.idx >= 1 && item.idx <= findingsForInspection.length)
+                  .map(item => {
+                    const finding = findingsForInspection[item.idx - 1];
+                    // Combina: descripción original + corrección IA + recomendación
+                    const aiContent = [
+                      item.correccion ? `✏️ Corrección IA: ${item.correccion}` : "",
+                      item.recomendacion ? `💡 Recomendación: ${item.recomendacion}` : "",
+                    ].filter(Boolean).join("\n");
+                    return { id: finding.id, ai_analysis: aiContent };
+                  });
+              }
+            } catch { /* parseo falló — continúa sin correcciones IA */ }
+          }
         }
-      } catch { /* keep default summary */ }
+      } catch { /* Prompt 1 falló — blindaje: continúa sin análisis por hallazgo */ }
     }
 
-    // ── Paso 3: intentar cerrar — el servidor verifica si ya fue cerrado ─────
+    // ── Paso 3: IA — Prompt 2: resumen ejecutivo global ──────────────────────
+    // Depende del contexto completo: zonas + secciones + hallazgos
+    if (findingsForInspection.length > 0) {
+      try {
+        // Construir contexto de secciones y zonas
+        const zonesContext = freshZonesData.map(z => {
+          const sec = sections.find(s => s.zoneIds.includes(z.id));
+          const zFindings = findingsForInspection.filter(f => f.zone_id === z.id);
+          return `  - ${z.name} (Sección: ${sec?.name || "Sin sección"}) | Status: ${z.status} | Hallazgos: ${zFindings.length}`;
+        }).join("\n");
+
+        const findingsSummaryList = findingsForInspection.map(f =>
+          `  • [${f.zone_name || "Sin zona"}] ${f.item_label}: ${f.description} (Severidad: ${f.severity})`
+        ).join("\n");
+
+        const totalEvaluated = okZones.length + issueZones.length;
+        const evalPct = freshZonesData.length > 0 ? Math.round((totalEvaluated / freshZonesData.length) * 100) : 0;
+
+        const prompt2 = `Eres un experto en seguridad industrial. Genera un resumen ejecutivo profesional en español de la siguiente inspección de seguridad en planta.
+
+DATOS DE LA INSPECCIÓN:
+- Total de zonas: ${freshZonesData.length}
+- Zonas evaluadas: ${totalEvaluated} (${evalPct}%)
+- Zonas con hallazgos (ISSUE): ${issueZones.length}
+- Zonas sin hallazgos (OK): ${okZones.length}
+- Zonas sin evaluar (PENDING): ${pendingZonesCount}
+- Total de hallazgos registrados: ${findingsForInspection.length}
+
+DETALLE POR ZONA:
+${zonesContext}
+
+LISTADO DE HALLAZGOS:
+${findingsSummaryList}
+
+El resumen debe incluir:
+1. Párrafo ejecutivo general (2-3 oraciones) con el estado global de la inspección y porcentaje de avance
+2. Sección "Áreas críticas" listando las zonas con más hallazgos o mayor severidad
+3. Sección "Recomendaciones generales" con 3-5 acciones prioritarias basadas en los hallazgos encontrados
+4. Una conclusión breve
+
+Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos especiales. Usa saltos de línea para separar secciones.`;
+
+        const res2 = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: prompt2 }),
+        });
+
+        if (res2.ok) {
+          const data2 = await res2.json();
+          if (data2.text && data2.text.trim()) {
+            summary = data2.text.trim();
+          }
+        }
+      } catch { /* Prompt 2 falló — blindaje: usa el summary de fallback */ }
+    }
+
+    // ── Paso 4: persistir correcciones IA en cada hallazgo (fire & forget) ───
+    // No bloqueamos el cierre por esto — si falla, el hallazgo queda sin ai_analysis
+    if (updatedFindingsFromAI.length > 0) {
+      Promise.allSettled(
+        updatedFindingsFromAI.map(({ id, ai_analysis }) =>
+          fetch("/api/findings/ai", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id, ai_analysis }),
+          }).catch(() => {}) // silencioso si falla
+        )
+      ).catch(() => {});
+    }
+
+    // ── Paso 5: intentar cerrar — el servidor verifica si ya fue cerrado ─────
     const closeRes = await fetch("/api/inspections", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -523,7 +624,6 @@ export default function SegurMapApp() {
     const closeData = await closeRes.json();
 
     if (closeData.already_closed) {
-      // Otro dispositivo ya finalizó — simplemente recargar y mostrar resultado
       setIsFinishing(false);
       await loadData();
       setIsInspectionActive(false);
@@ -532,9 +632,13 @@ export default function SegurMapApp() {
       return;
     }
 
-    // ── Paso 4: cierre exitoso — recargar todo ───────────────────────────────
-    const finishedZones = [...freshZonesData];
+    // ── Paso 6: cierre exitoso — esperar brevemente a que los PATCH de IA
+    //    terminen para que la recarga final ya los incluya ────────────────────
+    if (updatedFindingsFromAI.length > 0) {
+      await new Promise(res => setTimeout(res, 800));
+    }
 
+    const finishedZones = [...freshZonesData];
     setIsInspectionActive(false);
     setCurrentInspection(null);
     setIsFinishing(false);
@@ -1264,12 +1368,33 @@ export default function SegurMapApp() {
                   <div className="p-4 flex-1">
                     <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Observación:</p>
                     <p className="text-xs text-slate-600 italic">"{f.description}"</p>
-                    {f.ai_analysis && (
-                      <div className="mt-3 bg-slate-800 rounded-lg p-2">
-                        <p className="text-[8px] font-black text-blue-400 uppercase mb-0.5">Recomendación IA:</p>
-                        <p className="text-[9px] text-slate-300 leading-relaxed">{f.ai_analysis}</p>
-                      </div>
-                    )}
+                    {f.ai_analysis && (() => {
+                      const lines = f.ai_analysis.split("\n").filter(Boolean);
+                      const corrLine = lines.find(l => l.startsWith("✏️"));
+                      const recLine  = lines.find(l => l.startsWith("💡"));
+                      return (
+                        <div className="mt-3 space-y-1.5">
+                          {corrLine && (
+                            <div className="bg-blue-950 rounded-lg p-2">
+                              <p className="text-[8px] font-black text-blue-400 uppercase mb-0.5">✏️ Corrección IA:</p>
+                              <p className="text-[9px] text-blue-200 leading-relaxed">{corrLine.replace("✏️ Corrección IA: ", "")}</p>
+                            </div>
+                          )}
+                          {recLine && (
+                            <div className="bg-slate-800 rounded-lg p-2">
+                              <p className="text-[8px] font-black text-cyan-400 uppercase mb-0.5">💡 Recomendación IA:</p>
+                              <p className="text-[9px] text-slate-300 leading-relaxed">{recLine.replace("💡 Recomendación: ", "")}</p>
+                            </div>
+                          )}
+                          {!corrLine && !recLine && (
+                            <div className="bg-slate-800 rounded-lg p-2">
+                              <p className="text-[8px] font-black text-blue-400 uppercase mb-0.5">Recomendación IA:</p>
+                              <p className="text-[9px] text-slate-300 leading-relaxed">{f.ai_analysis}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {closed && f.corrective_actions && (
                       <div className="mt-3 bg-green-50 border border-green-200 rounded-lg p-2">
                         <p className="text-[8px] font-black text-green-600 uppercase mb-0.5">✅ Acciones Correctivas:</p>
@@ -2150,7 +2275,7 @@ function FindingDetailModal({ item, zoneName, inspectionId, existing, onSave, on
       photo_url = data.url;
     }
 
-    // Save finding immediately without waiting for AI
+    // Save finding immediately — AI analysis runs at inspection close, not per-finding
     onSave({
       inspection_id: inspectionId,
       zone_name: zoneName,
@@ -2162,12 +2287,6 @@ function FindingDetailModal({ item, zoneName, inspectionId, existing, onSave, on
       is_closed: false,
     });
     setIsUploading(false);
-
-    // AI analysis runs in background (non-blocking)
-    getAIAnalysis(item.label, description, zoneName).then(ai_analysis => {
-      if (ai_analysis) console.log("AI analysis ready:", ai_analysis);
-      // AI analysis will be saved on next zone confirm
-    });
   };
 
   return (
@@ -2316,10 +2435,21 @@ function ClosureModal({ finding, sectionName, onClose, onConfirm }: {
           )}
 
           {/* Recomendaciones */}
-          <div className="bg-blue-50 border-2 border-blue-100 rounded-xl p-4">
-            <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest mb-2">📋 Recomendaciones</p>
-            <p className="text-xs text-blue-400 italic">Sin recomendaciones disponibles por el momento.</p>
-          </div>
+          {(() => {
+            const recLine = finding.ai_analysis?.split("\n").find(l => l.startsWith("💡"));
+            const recText = recLine ? recLine.replace("💡 Recomendación: ", "") : null;
+            return (
+              <div className={`border-2 rounded-xl p-4 ${recText ? "bg-cyan-950 border-cyan-800" : "bg-blue-50 border-blue-100"}`}>
+                <p className={`text-[9px] font-black uppercase tracking-widest mb-2 ${recText ? "text-cyan-400" : "text-blue-600"}`}>
+                  💡 Recomendación IA
+                </p>
+                {recText
+                  ? <p className="text-xs text-cyan-200 leading-relaxed">{recText}</p>
+                  : <p className="text-xs text-blue-400 italic">Sin recomendaciones disponibles por el momento.</p>
+                }
+              </div>
+            );
+          })()}
 
           {/* Acciones Correctivas */}
           <div>
@@ -2406,12 +2536,34 @@ function FindingViewModal({ finding, sectionName, onClose, onImageZoom }: {
             </div>
           )}
 
-          {finding.ai_analysis && (
-            <div className="bg-slate-900 p-4 rounded-xl text-white">
-              <p className="text-[9px] font-black text-blue-400 uppercase mb-1">🤖 Análisis IA:</p>
-              <p className="text-xs text-slate-300 leading-relaxed">{finding.ai_analysis}</p>
-            </div>
-          )}
+          {finding.ai_analysis && (() => {
+            const lines = finding.ai_analysis.split("\n").filter(Boolean);
+            const corrLine = lines.find(l => l.startsWith("✏️"));
+            const recLine  = lines.find(l => l.startsWith("💡"));
+            return (
+              <div className="space-y-2">
+                {corrLine && (
+                  <div className="bg-blue-950 border border-blue-800 p-3 rounded-xl">
+                    <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-1">✏️ Corrección IA</p>
+                    <p className="text-xs text-blue-200 leading-relaxed">{corrLine.replace("✏️ Corrección IA: ", "")}</p>
+                  </div>
+                )}
+                {recLine && (
+                  <div className="bg-slate-900 border border-slate-700 p-3 rounded-xl">
+                    <p className="text-[9px] font-black text-cyan-400 uppercase tracking-widest mb-1">💡 Recomendación IA</p>
+                    <p className="text-xs text-slate-300 leading-relaxed">{recLine.replace("💡 Recomendación: ", "")}</p>
+                  </div>
+                )}
+                {/* Fallback: si ai_analysis tiene formato antiguo (texto plano) */}
+                {!corrLine && !recLine && (
+                  <div className="bg-slate-900 p-3 rounded-xl">
+                    <p className="text-[9px] font-black text-blue-400 uppercase mb-1">🤖 Análisis IA:</p>
+                    <p className="text-xs text-slate-300 leading-relaxed">{finding.ai_analysis}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {isClosed && finding.corrective_actions && (
             <div className="bg-green-50 p-4 rounded-xl border-2 border-green-100">
