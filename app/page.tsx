@@ -130,6 +130,10 @@ export default function SegurMapApp() {
   const [isLoading, setIsLoading] = useState(true);
   const [showNewInspectionModal, setShowNewInspectionModal] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [showConfigAuth, setShowConfigAuth] = useState(false);
+  const [configPassword, setConfigPassword] = useState("");
+  const [configPasswordError, setConfigPasswordError] = useState(false);
+  const [configUnlocked, setConfigUnlocked] = useState(false);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -583,7 +587,16 @@ export default function SegurMapApp() {
               ].map(({ key, label }) => (
                 <button
                   key={key}
-                  onClick={() => setView(key as any)}
+                  onClick={() => {
+                    if (key === "config" && !configUnlocked) {
+                      setConfigPassword("");
+                      setConfigPasswordError(false);
+                      setShowConfigAuth(true);
+                    } else {
+                      if (view === "config" && key !== "config") setConfigUnlocked(false);
+                      setView(key as any);
+                    }
+                  }}
                   className={`px-5 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${
                     view === key
                       ? key === "active_issues" && activeFindings.length > 0
@@ -610,7 +623,16 @@ export default function SegurMapApp() {
         ].map(({ key, label, icon }) => (
           <button
             key={key}
-            onClick={() => setView(key as any)}
+            onClick={() => {
+              if (key === "config" && !configUnlocked) {
+                setConfigPassword("");
+                setConfigPasswordError(false);
+                setShowConfigAuth(true);
+              } else {
+                if (view === "config" && key !== "config") setConfigUnlocked(false);
+                setView(key as any);
+              }
+            }}
             className={`relative flex flex-col items-center gap-1 px-3 py-1 transition-all ${
               view === key
                 ? key === "active_issues" ? "text-red-600" : "text-blue-600"
@@ -1328,6 +1350,71 @@ export default function SegurMapApp() {
           </div>
         </div>
       )}
+      {/* ── Modal contraseña config ── */}
+      {showConfigAuth && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur flex items-center justify-center z-[200] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-slate-100 overflow-hidden">
+            <div className="p-6 bg-slate-50 border-b text-center">
+              <div className="w-14 h-14 bg-slate-900 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-black text-slate-800">Acceso a Configuración</h3>
+              <p className="text-slate-500 text-sm mt-1">Introduzca contraseña de admin para ingresar</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <input
+                  type="password"
+                  value={configPassword}
+                  onChange={e => { setConfigPassword(e.target.value); setConfigPasswordError(false); }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") {
+                      if (configPassword === "admin") {
+                        setConfigUnlocked(true);
+                        setShowConfigAuth(false);
+                        setView("config");
+                      } else {
+                        setConfigPasswordError(true);
+                      }
+                    }
+                  }}
+                  placeholder="Contraseña"
+                  className={`w-full px-4 py-3 bg-slate-50 border-2 rounded-xl text-center font-black text-lg tracking-widest outline-none transition-all ${configPasswordError ? "border-red-400 bg-red-50" : "border-slate-200 focus:border-slate-900"}`}
+                  autoFocus
+                />
+                {configPasswordError && (
+                  <p className="text-red-500 text-[10px] font-black uppercase text-center mt-1.5">Contraseña incorrecta</p>
+                )}
+              </div>
+            </div>
+            <div className="px-6 pb-6 flex gap-3">
+              <button
+                onClick={() => { setShowConfigAuth(false); setConfigPassword(""); setConfigPasswordError(false); }}
+                className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50 transition-all"
+              >
+                CANCELAR
+              </button>
+              <button
+                onClick={() => {
+                  if (configPassword === "admin") {
+                    setConfigUnlocked(true);
+                    setShowConfigAuth(false);
+                    setView("config");
+                  } else {
+                    setConfigPasswordError(true);
+                  }
+                }}
+                className="flex-1 py-3 bg-slate-900 text-white rounded-xl font-black text-xs uppercase hover:bg-black transition-all shadow-lg"
+              >
+                INGRESAR
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Footer banner ── */}
       <footer
         className="w-full py-1.5 md:py-2 flex items-center justify-center"
