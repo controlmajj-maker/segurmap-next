@@ -823,12 +823,17 @@ export default function SegurMapApp() {
                         {zone.name}
                       </span>
 
-                      {/* Hallazgos registrados en esta zona — usa allFindings para persistir tras recarga */}
+                      {/* Hallazgos registrados en esta zona */}
                       {isISSUE && (() => {
-                        const lastInsp = inspections.find((i: any) => !i.is_active);
+                        // Durante inspección activa: contar hallazgos de esta inspección y zona
+                        // Sin inspección activa: contar hallazgos de la última completada
+                        const inspId = isInspectionActive
+                          ? currentInspection?.id
+                          : inspections.find((i: any) => !i.is_active)?.id;
+                        if (!inspId) return null;
                         const count = allFindings.filter(f =>
-                          f.zone_id === zone.id &&
-                          (!lastInsp || f.inspection_id === lastInsp.id)
+                          f.inspection_id === inspId &&
+                          f.zone_id === zone.id
                         ).length;
                         return count > 0 ? (
                           <span className="text-[9px] font-black text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">
