@@ -1,29 +1,23 @@
 import { NextResponse } from "next/server";
-import pool from "../../../../lib/db";
+import { GoogleGenAI } from "@google/genai";
 
-// PATCH /api/findings/ai
-// Actualiza el campo ai_analysis de un finding.
-// Llamado al finalizar una inspección, después de que la IA procesa todos los hallazgos.
-// Blindado: si falla, el hallazgo queda sin ai_analysis pero la inspección ya cerró.
-export async function PATCH(req: Request) {
+export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const { id, ai_analysis } = body;
+    const { prompt } = await req.json();
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    if (!id || !ai_analysis) {
-      return NextResponse.json({ error: "id y ai_analysis son requeridos" }, { status: 400 });
+    if (!apiKey) {
+      return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
     }
 
-    const result = await pool.query(
-      "UPDATE findings SET ai_analysis = $1 WHERE id = $2 RETURNING id, ai_analysis",
-      [ai_analysis, id]
-    );
+    const ai = new GoogleGenAI({ apiKey });
 
-    if (result.rowCount === 0) {
-      return NextResponse.json({ error: "Finding no encontrado" }, { status: 404 });
-    }
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+    });
 
-    return NextResponse.json({ ok: true, id: result.rows[0].id });
+    return NextResponse.json({ text: response.text });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
