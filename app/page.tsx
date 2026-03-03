@@ -820,7 +820,6 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
             sections={sections}
             onSectionsChange={saveSections}
             isInspectionActive={isInspectionActive}
-            isOwner={isOwner}
             onShowCancelConfirm={() => setShowCancelConfirm(true)}
             onShowFinishConfirm={() => setShowFinishConfirm(true)}
             isFinishing={isFinishing}
