@@ -54,6 +54,10 @@ export default function SegurMapApp() {
   const [cancelPasswordError, setCancelPasswordError] = useState(false);
   // isOwner: true solo en el dispositivo que inició la inspección activa
   const [isOwner, setIsOwner] = useState(false);
+  // Recuperación de ownership si se perdió el localStorage
+  const [showRecoverOwnership, setShowRecoverOwnership] = useState(false);
+  const [recoverPassword, setRecoverPassword] = useState("");
+  const [recoverPasswordError, setRecoverPasswordError] = useState(false);
   const [showConfigAuth, setShowConfigAuth] = useState(false);
   const [configPassword, setConfigPassword] = useState("");
   const [configPasswordError, setConfigPasswordError] = useState(false);
@@ -766,6 +770,11 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
             summaryCollapsedKeys={summaryCollapsedKeys}
             toggleSummaryKey={toggleSummaryKey}
             isOwner={isOwner}
+            onRecoverOwnership={() => {
+              setRecoverPassword("");
+              setRecoverPasswordError(false);
+              setShowRecoverOwnership(true);
+            }}
           />
         )}
 
@@ -810,6 +819,12 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
             onDeleteInspection={handleDeleteInspection}
             sections={sections}
             onSectionsChange={saveSections}
+            isInspectionActive={isInspectionActive}
+            isOwner={isOwner}
+            onShowCancelConfirm={() => setShowCancelConfirm(true)}
+            onShowFinishConfirm={() => setShowFinishConfirm(true)}
+            isFinishing={isFinishing}
+            pendingZones={pendingZones}
           />
         )}
       </main>
@@ -1009,6 +1024,73 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
               >
                 INGRESAR
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal recuperación de ownership ── */}
+      {showRecoverOwnership && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur flex items-center justify-center z-[200] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-amber-100 overflow-hidden">
+            <div className="p-6 bg-amber-50 border-b text-center">
+              <div className="w-14 h-14 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                <svg className="w-7 h-7 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-black text-slate-800">Recuperar control</h3>
+              <p className="text-slate-500 text-sm mt-1">Ingresa la contraseña de admin para retomar el control de este recorrido en este dispositivo.</p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <input
+                  type="password"
+                  value={recoverPassword}
+                  onChange={e => { setRecoverPassword(e.target.value); setRecoverPasswordError(false); }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") {
+                      if (recoverPassword === "admin" && currentInspection) {
+                        if (typeof window !== "undefined") localStorage.setItem("ownerInspectionId", currentInspection.id);
+                        setIsOwner(true);
+                        setShowRecoverOwnership(false);
+                        setRecoverPassword("");
+                      } else {
+                        setRecoverPasswordError(true);
+                      }
+                    }
+                  }}
+                  placeholder="Contraseña"
+                  className={`w-full px-4 py-3 bg-slate-50 border-2 rounded-xl text-center font-black text-lg tracking-widest outline-none transition-all ${recoverPasswordError ? "border-red-400 bg-red-50" : "border-slate-200 focus:border-amber-400"}`}
+                  autoFocus
+                />
+                {recoverPasswordError && (
+                  <p className="text-red-500 text-[10px] font-black uppercase text-center mt-1.5">Contraseña incorrecta</p>
+                )}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setShowRecoverOwnership(false); setRecoverPassword(""); setRecoverPasswordError(false); }}
+                  className="flex-1 py-3 border-2 border-slate-200 rounded-xl font-black text-xs uppercase text-slate-500 hover:bg-slate-50 transition-all"
+                >
+                  CANCELAR
+                </button>
+                <button
+                  onClick={() => {
+                    if (recoverPassword === "admin" && currentInspection) {
+                      if (typeof window !== "undefined") localStorage.setItem("ownerInspectionId", currentInspection.id);
+                      setIsOwner(true);
+                      setShowRecoverOwnership(false);
+                      setRecoverPassword("");
+                    } else {
+                      setRecoverPasswordError(true);
+                    }
+                  }}
+                  className="flex-1 py-3 bg-amber-500 text-white rounded-xl font-black text-xs uppercase hover:bg-amber-600 transition-all shadow-lg"
+                >
+                  RECUPERAR CONTROL
+                </button>
+              </div>
             </div>
           </div>
         </div>
