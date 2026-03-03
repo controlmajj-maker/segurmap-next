@@ -55,6 +55,7 @@ export function HistoryView({
               collapsedKeys={summaryCollapsedKeys}
               toggleKey={toggleSummaryKey}
               onViewFinding={setViewFinding}
+              defaultCollapsed={true}
             />
           );
         })

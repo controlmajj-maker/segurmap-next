@@ -205,6 +205,7 @@ export function InspectionReportCard({
   collapsedKeys,
   toggleKey,
   onViewFinding,
+  defaultCollapsed = false,
 }: {
   inspection: Inspection;
   inspFindings: Finding[];
@@ -213,17 +214,21 @@ export function InspectionReportCard({
   collapsedKeys: Set<string>;
   toggleKey: (k: string) => void;
   onViewFinding: (f: Finding) => void;
+  defaultCollapsed?: boolean;
 }) {
   const keyPrefix   = `report:${inspection.id}`;
   const openCount   = inspFindings.filter(f => f.is_closed !== true && (f as any).is_closed !== "true").length;
   const closedCount = inspFindings.filter(f => f.is_closed === true || (f as any).is_closed === "true").length;
-  const isCardCollapsed = collapsedKeys.has(`${keyPrefix}:card`);
+  // defaultCollapsed=true → cerrada salvo que usuario la abra; false → abierta salvo que usuario la cierre
+  const isCardCollapsed = defaultCollapsed
+    ? !collapsedKeys.has(`${keyPrefix}:card:open`)
+    : collapsedKeys.has(`${keyPrefix}:card`);
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
       {/* ── Header principal: título del reporte, colapsable ── */}
       <button
-        onClick={() => toggleKey(`${keyPrefix}:card`)}
+        onClick={() => toggleKey(defaultCollapsed ? `${keyPrefix}:card:open` : `${keyPrefix}:card`)}
         className="w-full flex items-center justify-between p-4 md:p-6 border-b border-slate-100 hover:bg-slate-50 transition-all text-left"
       >
         <div className="flex items-center gap-4">
