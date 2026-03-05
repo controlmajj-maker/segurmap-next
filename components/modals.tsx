@@ -651,54 +651,6 @@ export function ClosureModal({ finding, sectionName, onClose, onConfirm }: {
     </div>
   );
 }
-
-
-  return (
-    <div className="fixed inset-0 bg-slate-900/90 backdrop-blur flex items-center justify-center z-[120] p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border-4 border-green-50 overflow-hidden flex flex-col max-h-[92vh]">
-
-        {/* ── Encabezado ── */}
-        <div className="p-5 bg-green-50 border-b shrink-0">
-          <span className="text-[9px] font-black uppercase text-green-600 bg-green-100 px-2 py-0.5 rounded tracking-widest">Protocolo de Cierre</span>
-          {sectionName && (
-            <p className="text-sm font-black text-slate-700 mt-2">
-              <span className="text-slate-400 font-bold text-sm">Sección:</span> {sectionName}
-            </p>
-          )}
-          {finding.zone_name && (
-            <p className="text-sm font-black text-slate-700 mt-1">
-              <span className="text-slate-400 font-bold text-sm">Zona:</span> 📍 {finding.zone_name}
-            </p>
-          )}
-          <h3 className="text-2xl font-black text-slate-800 mt-3">Cerrar Hallazgo</h3>
-        </div>
-
-        {/* ── Cuerpo scrollable ── */}
-        <div className="overflow-y-auto flex-1 p-5 space-y-4">
-
-          {/* Descripción del hallazgo */}
-          <div className="bg-slate-50 p-3 rounded-xl border">
-            <p className="text-[9px] font-black text-slate-400 uppercase mb-1 tracking-widest">Descripción del Hallazgo:</p>
-            <p className="text-sm text-slate-700 italic">"{finding.description}"</p>
-          </div>
-
-          {/* Foto de evidencia */}
-          {finding.photo_url && (
-            <div>
-              <p className="text-[9px] font-black text-slate-400 uppercase mb-1.5 tracking-widest">Evidencia Fotográfica:</p>
-              <div
-                className="relative rounded-xl overflow-hidden border-2 border-slate-100 cursor-zoom-in"
-                onClick={() => setZoomPhoto(true)}
-              >
-                <img src={finding.photo_url} alt="Evidencia" className="w-full max-h-48 object-cover" />
-                <div className="absolute bottom-0 inset-x-0 bg-black/40 text-center py-1">
-                  <p className="text-[8px] font-black text-white uppercase tracking-widest">Toca para ampliar</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-// ─── Finding View Modal ───────────────────────────────────────────────────────
 export function FindingViewModal({ finding, sectionName, onClose, onImageZoom }: {
   finding: Finding;
   sectionName?: string;
