@@ -229,6 +229,23 @@ export default function SegurMapApp() {
       .catch(e => console.error("[zones save FAILED]", e.message));
   }, []);
 
+  // ─── Guard: verifica en DB si ya hay inspección activa antes de abrir el modal ───
+  async function handleNewInspectionClick() {
+    try {
+      const res = await fetch("/api/inspections");
+      const data: any[] = await res.json();
+      const activeInsp = Array.isArray(data) ? data.find((i: any) => i.is_active === true) : null;
+      if (activeInsp) {
+        // Hay una inspección activa en otro dispositivo — sincronizar y unirse como observador
+        await loadData();
+        return;
+      }
+    } catch {
+      // Si el fetch falla, no bloqueamos — dejamos intentar normalmente
+    }
+    setShowNewInspectionModal(true);
+  }
+
   async function handleStartInspection(title: string, location: string, inspector: string) {
     const res = await fetch("/api/inspections", {
       method: "POST",
@@ -760,7 +777,7 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
             expandedSectionIds={expandedSectionIds}
             toggleSection={toggleSection}
             setSelectedZone={setSelectedZone}
-            setShowNewInspectionModal={setShowNewInspectionModal}
+            setShowNewInspectionModal={(v) => { if (v) handleNewInspectionClick(); else setShowNewInspectionModal(false); }}
             setShowCancelConfirm={setShowCancelConfirm}
             setShowFinishConfirm={setShowFinishConfirm}
             isFinishing={isFinishing}
