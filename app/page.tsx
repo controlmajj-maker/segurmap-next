@@ -625,6 +625,28 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
     setAllFindings(Array.isArray(finData) ? finData : []);
   }
 
+  async function handleDeleteFinding(findingId: string) {
+    await fetch("/api/findings", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: findingId }),
+    });
+    const finRes = await fetch("/api/findings");
+    const finData = await finRes.json();
+    setAllFindings(Array.isArray(finData) ? finData : []);
+  }
+
+  async function handleUpdateFinding(findingId: string, description: string, itemLabel: string) {
+    await fetch("/api/findings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: findingId, description, item_label: itemLabel }),
+    });
+    const finRes = await fetch("/api/findings");
+    const finData = await finRes.json();
+    setAllFindings(Array.isArray(finData) ? finData : []);
+  }
+
   async function handleDeleteAll() {
     await fetch("/api/admin", { method: "DELETE" });
     setInspections([]);
@@ -792,6 +814,8 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
               setRecoverPasswordError(false);
               setShowRecoverOwnership(true);
             }}
+            onDeleteFinding={handleDeleteFinding}
+            onUpdateFinding={handleUpdateFinding}
           />
         )}
 
@@ -820,6 +844,8 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
             setViewFinding={setViewFinding}
             summaryCollapsedKeys={summaryCollapsedKeys}
             toggleSummaryKey={toggleSummaryKey}
+            onDeleteFinding={handleDeleteFinding}
+            onUpdateFinding={handleUpdateFinding}
           />
         )}
 
