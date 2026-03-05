@@ -25,6 +25,8 @@ export function CurrentView({
   toggleSummaryKey,
   isOwner,
   onRecoverOwnership,
+  onDeleteFinding,
+  onUpdateFinding,
 }: {
   isInspectionActive: boolean;
   currentInspection: Inspection | null;
@@ -46,6 +48,8 @@ export function CurrentView({
   toggleSummaryKey: (key: string) => void;
   isOwner: boolean;
   onRecoverOwnership: () => void;
+  onDeleteFinding?: (id: string) => Promise<void>;
+  onUpdateFinding?: (id: string, description: string, itemLabel: string) => Promise<void>;
 }) {
   return (
     <div className="space-y-6">
@@ -396,6 +400,8 @@ export function CurrentView({
             collapsedKeys={summaryCollapsedKeys}
             toggleKey={toggleSummaryKey}
             onViewFinding={setViewFinding}
+            onDeleteFinding={onDeleteFinding}
+            onUpdateFinding={onUpdateFinding}
           />
         );
       })()}
