@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import pool from "../../../lib/db";
+import { del } from "@vercel/blob";
 
 export async function GET(req: Request) {
   try {
@@ -57,6 +58,39 @@ export async function PUT(req: Request) {
       [body.corrective_actions, body.id]
     );
     return NextResponse.json(result.rows[0]);
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// PATCH: edit finding fields (description, item_label)
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json();
+    const result = await pool.query(
+      `UPDATE findings SET description = COALESCE($1, description), item_label = COALESCE($2, item_label) WHERE id = $3 RETURNING *`,
+      [body.description ?? null, body.item_label ?? null, body.id]
+    );
+    return NextResponse.json(result.rows[0]);
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+// DELETE: remove a finding and its Blob photo if present
+export async function DELETE(req: Request) {
+  try {
+    const { id } = await req.json();
+    // Fetch photo_url before deleting
+    const row = await pool.query("SELECT photo_url FROM findings WHERE id = $1", [id]);
+    const photoUrl: string | null = row.rows[0]?.photo_url ?? null;
+    // Delete from DB
+    await pool.query("DELETE FROM findings WHERE id = $1", [id]);
+    // Delete from Vercel Blob — silently ignore errors
+    if (photoUrl) {
+      try { await del(photoUrl); } catch { /* blob may not exist */ }
+    }
+    return NextResponse.json({ success: true });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
