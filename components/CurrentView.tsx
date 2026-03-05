@@ -49,13 +49,22 @@ export function CurrentView({
 }) {
   return (
     <div className="space-y-6">
+      {isInspectionActive && (
+        <style>{`
+          @keyframes borderGlow {
+            0%, 100% { box-shadow: 0 0 0 3px rgba(59,130,246,0.15), 0 0 18px 4px rgba(59,130,246,0.18), 0 20px 40px -8px rgba(59,130,246,0.12); border-color: rgba(96,165,250,0.7); }
+            50%       { box-shadow: 0 0 0 4px rgba(59,130,246,0.35), 0 0 32px 8px rgba(59,130,246,0.32), 0 20px 40px -8px rgba(59,130,246,0.18); border-color: rgba(59,130,246,1); }
+          }
+        `}</style>
+      )}
             <div className={`relative overflow-hidden rounded-3xl shadow-xl transition-all duration-700 ${
         isInspectionActive
-          ? "bg-white border-2 border-blue-400"
+          ? "bg-white border-2"
           : "bg-white border border-slate-100"
       } p-4 md:p-8`}
         style={isInspectionActive ? {
-          boxShadow: "0 0 0 3px rgba(59,130,246,0.15), 0 20px 40px -8px rgba(59,130,246,0.12)"
+          animation: "borderGlow 2s ease-in-out infinite",
+          borderColor: "rgba(96,165,250,0.7)",
         } : {}}>
 
         {/* Pulso sutil en esquina superior derecha solo durante inspección activa */}
@@ -77,7 +86,9 @@ export function CurrentView({
                 : "bg-slate-100 text-slate-500 border border-slate-200"
             }`}>
               <span className={`w-1.5 h-1.5 rounded-full ${isInspectionActive ? "bg-blue-500 animate-pulse" : "bg-slate-400"}`} />
-              {isInspectionActive ? "EN PROGRESO" : "ÚLTIMO RECORRIDO"}
+              {isInspectionActive
+                ? `EN PROGRESO · ${new Date().toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }).toUpperCase()}`
+                : "ÚLTIMO RECORRIDO"}
             </div>
 
             <h2 className={`text-2xl md:text-3xl font-black tracking-tight ${isInspectionActive ? "text-slate-800" : "text-slate-800"}`}>
@@ -274,7 +285,7 @@ export function CurrentView({
             <div className="space-y-3">
               {sections.map(sec => {
                 const secZones = sec.zoneIds.map(id => zones.find(z => z.id === id)).filter(Boolean) as Zone[];
-                const isExpanded = !expandedSectionIds.has(sec.id);
+                const isExpanded = expandedSectionIds.has(sec.id);
                 const hasIssue   = secZones.some(z => z.status === "ISSUE");
                 const allOk      = secZones.length > 0 && secZones.every(z => z.status === "OK");
                 // Total de hallazgos reales en toda la sección (no solo zonas con issue)
