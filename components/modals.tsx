@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import type { Zone, Finding, ZoneStatus, Severity } from "./types";
 import { SAFETY_CHECKLIST } from "./constants";
+import { compressImage } from "../lib/imageCompressor";
+import { requestQueue } from "../lib/requestQueue";
 
 // ─── New Inspection Modal ─────────────────────────────────────────────────────
 export function NewInspectionModal({ onConfirm, onClose }: {
@@ -213,17 +215,20 @@ export function InspectionModal({ zone, inspectionId, existingFindings, onClose,
             }
             // Persistir inmediatamente en DB para no perder datos al refrescar
             try {
-              const res = await fetch("/api/findings", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...finding, zone_id: zone.id }),
+              const saved = await requestQueue.enqueue(async () => {
+                const res = await fetch("/api/findings", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ ...finding, zone_id: zone.id }),
+                });
+                if (!res.ok) throw new Error(`Save error: ${res.status}`);
+                return await res.json();
               });
-              const saved = await res.json();
               setFindings(prev => ({ ...prev, [key]: { ...finding, id: saved.id, created_at: saved.created_at } as Finding }));
               // Notificar a page.tsx: zona tiene hallazgo → actualizar status y contadores
               if (onFindingSaved) await onFindingSaved(zone.id, finding.inspection_id);
             } catch {
-              // Fallback local si falla la red
+              // Fallback local si falla la red — se reintentará al validar zona
               setFindings(prev => ({ ...prev, [key]: { ...finding, id: `local_${Date.now()}`, created_at: new Date().toISOString() } as Finding }));
             }
             setItemToReport(null);
@@ -335,12 +340,18 @@ export function FindingDetailModal({ item, zoneName, inspectionId, existing, onS
 
     try {
       if (file) {
-        const formData = new FormData();
-        formData.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: formData });
-        if (!res.ok) throw new Error(`Upload error: ${res.status}`);
-        const data = await res.json();
-        photo_url = data.url;
+        // 1. Comprimir antes de subir — garantiza < 3.5MB (límite Vercel = 4.5MB)
+        const compressed = await compressImage(file);
+
+        // 2. Subir a través de la cola — si otro usuario está subiendo, espera su turno
+        photo_url = await requestQueue.enqueue(async () => {
+          const formData = new FormData();
+          formData.append("file", compressed);
+          const res = await fetch("/api/upload", { method: "POST", body: formData });
+          if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+          const data = await res.json();
+          return data.url as string;
+        });
       }
     } catch (err) {
       console.error("Error uploading photo:", err);
@@ -439,9 +450,12 @@ export function FindingDetailModal({ item, zoneName, inspectionId, existing, onS
           <button
             onClick={handleSave}
             disabled={!description.trim() || isUploading}
-            className={`w-full py-3 rounded-xl font-black text-sm text-white transition-all ${!description.trim() || isUploading ? "bg-slate-300" : "bg-slate-900 hover:bg-black shadow-lg"}`}
+            className={`w-full py-3 rounded-xl font-black text-sm text-white transition-all flex items-center justify-center gap-2 ${!description.trim() || isUploading ? "bg-slate-300" : "bg-slate-900 hover:bg-black shadow-lg"}`}
           >
-            {isUploading ? "SUBIENDO FOTO..." : "GUARDAR EVIDENCIA"}
+            {isUploading
+              ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> GUARDANDO...</>
+              : "GUARDAR EVIDENCIA"
+            }
           </button>
           <div className="flex gap-2">
             <button onClick={onClear} className="flex-1 py-2.5 rounded-xl border-2 border-slate-200 text-[9px] font-black uppercase text-slate-500">Borrar</button>
@@ -476,14 +490,27 @@ export function ClosureModal({ finding, sectionName, onClose, onConfirm }: {
     if (!canSubmit) return;
     setIsUploading(true);
     let closurePhotoUrl: string | undefined;
-    if (closureFile) {
-      const formData = new FormData();
-      formData.append("file", closureFile);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      closurePhotoUrl = data.url;
+    try {
+      if (closureFile) {
+        // 1. Comprimir antes de subir
+        const compressed = await compressImage(closureFile);
+
+        // 2. Subir a través de la cola — serializa con otros uploads en curso
+        closurePhotoUrl = await requestQueue.enqueue(async () => {
+          const formData = new FormData();
+          formData.append("file", compressed);
+          const res = await fetch("/api/upload", { method: "POST", body: formData });
+          if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+          const data = await res.json();
+          return data.url as string;
+        });
+      }
+    } catch (err) {
+      console.error("Error uploading closure photo:", err);
+      // Si falla el upload, continuar sin foto de cierre para no bloquear
+    } finally {
+      setIsUploading(false);
     }
-    setIsUploading(false);
     onConfirm(finding.id, actions, closurePhotoUrl);
   };
 
