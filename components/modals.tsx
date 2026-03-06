@@ -53,13 +53,14 @@ export function NewInspectionModal({ onConfirm, onClose }: {
 }
 
 // ─── Inspection Modal ─────────────────────────────────────────────────────────
-export function InspectionModal({ zone, inspectionId, existingFindings, onClose, onSave, onFindingSaved }: {
+export function InspectionModal({ zone, inspectionId, existingFindings, onClose, onSave, onFindingSaved, isInspectionFinishing }: {
   zone: Zone;
   inspectionId: string;
   existingFindings: Finding[];
   onClose: () => void;
   onSave: (zoneId: string, zoneName: string, status: ZoneStatus, checklistResults: Record<string, boolean>, findings: Record<string, Finding>) => Promise<void>;
   onFindingSaved?: (zoneId: string, inspectionId: string) => Promise<void>;
+  isInspectionFinishing?: boolean;
 }) {
   const [results, setResults] = useState<Record<string, boolean>>(zone.checklistResults || {});
   const [findings, setFindings] = useState<Record<string, Finding>>(zone.findings || {});
@@ -215,6 +216,12 @@ export function InspectionModal({ zone, inspectionId, existingFindings, onClose,
             }
             // Persistir inmediatamente en DB para no perder datos al refrescar
             try {
+              // Guard: si el reporte ya se está generando, no persistir — la inspección ya cerró
+              if (isInspectionFinishing) {
+                console.warn("[InspectionModal] bloqueado: reporte en generación");
+                setItemToReport(null);
+                return;
+              }
               const saved = await requestQueue.enqueue(async () => {
                 const res = await fetch("/api/findings", {
                   method: "POST",
@@ -244,6 +251,17 @@ export function InspectionModal({ zone, inspectionId, existingFindings, onClose,
             setItemToReport(null);
           }}
           onCancel={() => setItemToReport(null)}
+          onBlockedByFinishing={() => {
+            // El servidor confirmó que el reporte ya se está generando —
+            // cerrar el modal de hallazgo y notificar al padre para que
+            // actualice is_finishing y muestre el banner.
+            setItemToReport(null);
+            if (onFindingSaved) {
+              // Reutilizamos onFindingSaved con un trigger especial para que
+              // page.tsx recargue el estado de la inspección
+              onFindingSaved(zone.id, inspectionId).catch(() => {});
+            }
+          }}
         />
       )}
 
@@ -317,7 +335,7 @@ export function InspectionModal({ zone, inspectionId, existingFindings, onClose,
 }
 
 // ─── Finding Detail Modal ─────────────────────────────────────────────────────
-export function FindingDetailModal({ item, zoneName, inspectionId, existing, onSave, onClear, onCancel }: {
+export function FindingDetailModal({ item, zoneName, inspectionId, existing, onSave, onClear, onCancel, onBlockedByFinishing }: {
   item: { id: string; label: string };
   zoneName: string;
   inspectionId: string;
@@ -325,6 +343,7 @@ export function FindingDetailModal({ item, zoneName, inspectionId, existing, onS
   onSave: (f: Omit<Finding, "id" | "created_at">) => void;
   onClear: () => void;
   onCancel: () => void;
+  onBlockedByFinishing?: () => void;
 }) {
   const [description, setDescription] = useState(existing?.description || "");
   const [severity, setSeverity] = useState<Severity>(existing?.severity || "medium");
@@ -339,6 +358,21 @@ export function FindingDetailModal({ item, zoneName, inspectionId, existing, onS
     let photo_url = existing?.photo_url || null;
 
     try {
+      // ── Candado en tiempo real: verificar is_finishing en servidor ANTES de subir ──
+      // No dependemos del polling — consultamos la DB en el momento exacto del clic.
+      try {
+        const chk = await fetch("/api/inspections");
+        if (chk.ok) {
+          const chkData: any[] = await chk.json();
+          const insp = chkData.find((i: any) => i.id === inspectionId);
+          if (insp?.is_finishing || insp?.is_active === false) {
+            setIsUploading(false);
+            onBlockedByFinishing?.();
+            return;
+          }
+        }
+      } catch { /* si el check falla, continuar — el guard del servidor es la última línea */ }
+
       if (file) {
         // 1. Comprimir antes de subir — garantiza < 3.5MB (límite Vercel = 4.5MB)
         const compressed = await compressImage(file);
