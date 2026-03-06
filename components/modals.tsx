@@ -51,12 +51,13 @@ export function NewInspectionModal({ onConfirm, onClose }: {
 }
 
 // ─── Inspection Modal ─────────────────────────────────────────────────────────
-export function InspectionModal({ zone, inspectionId, existingFindings, onClose, onSave }: {
+export function InspectionModal({ zone, inspectionId, existingFindings, onClose, onSave, onFindingSaved }: {
   zone: Zone;
   inspectionId: string;
   existingFindings: Finding[];
   onClose: () => void;
   onSave: (zoneId: string, zoneName: string, status: ZoneStatus, checklistResults: Record<string, boolean>, findings: Record<string, Finding>) => Promise<void>;
+  onFindingSaved?: (zoneId: string, inspectionId: string) => Promise<void>;
 }) {
   const [results, setResults] = useState<Record<string, boolean>>(zone.checklistResults || {});
   const [findings, setFindings] = useState<Record<string, Finding>>(zone.findings || {});
@@ -219,6 +220,8 @@ export function InspectionModal({ zone, inspectionId, existingFindings, onClose,
               });
               const saved = await res.json();
               setFindings(prev => ({ ...prev, [key]: { ...finding, id: saved.id, created_at: saved.created_at } as Finding }));
+              // Notificar a page.tsx: zona tiene hallazgo → actualizar status y contadores
+              if (onFindingSaved) await onFindingSaved(zone.id, finding.inspection_id);
             } catch {
               // Fallback local si falla la red
               setFindings(prev => ({ ...prev, [key]: { ...finding, id: `local_${Date.now()}`, created_at: new Date().toISOString() } as Finding }));
@@ -330,12 +333,21 @@ export function FindingDetailModal({ item, zoneName, inspectionId, existing, onS
     setIsUploading(true);
     let photo_url = existing?.photo_url || null;
 
-    if (file) {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      photo_url = data.url;
+    try {
+      if (file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/upload", { method: "POST", body: formData });
+        if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+        const data = await res.json();
+        photo_url = data.url;
+      }
+    } catch (err) {
+      console.error("Error uploading photo:", err);
+      // Continuar sin foto si el upload falla — no bloquear al usuario
+      photo_url = existing?.photo_url || null;
+    } finally {
+      setIsUploading(false);
     }
 
     // Save finding immediately — AI analysis runs at inspection close, not per-finding
@@ -349,7 +361,6 @@ export function FindingDetailModal({ item, zoneName, inspectionId, existing, onS
       ai_analysis: undefined,
       is_closed: false,
     });
-    setIsUploading(false);
   };
 
   return (
