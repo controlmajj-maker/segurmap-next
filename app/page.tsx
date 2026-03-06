@@ -937,6 +937,26 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
           onSave={async (zoneId, zoneName, status, checklistResults, findings) => {
             await handleZoneSave(zoneId, zoneName, status, checklistResults, findings);
           }}
+          onFindingSaved={async (zoneId, inspectionId) => {
+            // Actualizar zone.status a ISSUE en memoria y en DB para reflejar el hallazgo
+            // sin esperar a que el usuario pulse "Validar Zona"
+            setZones(prev => {
+              const updated = prev.map(z =>
+                z.id === zoneId && z.status !== "ISSUE" ? { ...z, status: "ISSUE" as ZoneStatus } : z
+              );
+              // Persistir en background
+              fetch("/api/inspections", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: inspectionId, zones_data: updated }),
+              }).catch(() => {});
+              return updated;
+            });
+            // Recargar allFindings para que los contadores sean correctos
+            const finRes = await fetch("/api/findings");
+            const finData = await finRes.json();
+            setAllFindings(Array.isArray(finData) ? finData : []);
+          }}
         />
       )}
 
