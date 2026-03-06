@@ -15,6 +15,32 @@ import {
   FindingViewModal,
 } from "../components/modals";
 
+// ─── AI helper con reintentos ────────────────────────────────────────────────
+// Intenta hasta maxAttempts veces con 2s de espera entre intentos.
+// Si todos fallan o están vacíos, devuelve null para activar el blindaje de fallback.
+async function callAIWithRetry(prompt: string, maxAttempts = 2): Promise<string | null> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 45000);
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+        signal: ac.signal,
+      }).finally(() => clearTimeout(timer));
+      if (res.ok) {
+        const data = await res.json();
+        if (data.text && data.text.trim()) return data.text.trim();
+      }
+    } catch (e) {
+      console.warn(`[callAIWithRetry] intento ${attempt}/${maxAttempts} falló:`, e);
+    }
+    if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 2000));
+  }
+  return null; // todos los intentos fallaron — activar blindaje
+}
+
 // ─── AI Analysis via Gemini ───────────────────────────────────────────────────
 async function getAIAnalysis(itemLabel: string, description: string, zoneName: string): Promise<string> {
   try {
@@ -160,8 +186,18 @@ export default function SegurMapApp() {
         setIsInspectionActive(true);
         // Restore ownership: only the device that started it has the ownerInspectionId
         const storedOwnerId = typeof window !== "undefined" ? localStorage.getItem("ownerInspectionId") : null;
-        setIsOwner(storedOwnerId === activeInsp.id);
+        const ownerHere = storedOwnerId === activeInsp.id;
+        setIsOwner(ownerHere);
         setZones(activeInsp.zones_data ?? (configZones ?? INITIAL_ZONES).map(z => ({ ...z, status: "PENDING" as ZoneStatus, findings: {} })));
+
+        // ── Reanudación automática: si is_finishing=true y este dispositivo es
+        //    el dueño, significa que el usuario cerró/refrescó durante la generación
+        //    del reporte. Lo retomamos automáticamente.
+        if (activeInsp.is_finishing && ownerHere) {
+          console.log("[loadData] is_finishing detectado — reanudando generación de reporte...");
+          // Pequeño delay para que el estado de React se estabilice antes de llamar
+          setTimeout(() => handleFinishInspection(), 500);
+        }
       } else {
         setIsInspectionActive(false);
         setCurrentInspection(null);
@@ -377,6 +413,11 @@ export default function SegurMapApp() {
     checklistResults: Record<string, boolean>,
     newFindings: Record<string, Finding>
   ) {
+    // Guard: no guardar si el reporte ya está siendo generado
+    if ((currentInspection as any)?.is_finishing) {
+      console.warn("[handleZoneSave] bloqueado — inspección en estado is_finishing");
+      return;
+    }
     // 1. Update zones state immediately (before any async calls)
     const updatedZones = zones.map(z =>
       z.id === zoneId ? { ...z, status, checklistResults, findings: newFindings } : z
@@ -425,6 +466,17 @@ export default function SegurMapApp() {
   async function handleFinishInspection() {
     if (!currentInspection) return;
     setIsFinishing(true);
+
+    try { // ── Blindaje externo: isFinishing SIEMPRE vuelve a false ──────────
+
+    // ── Paso 0: marcar en DB que este recorrido está siendo finalizado ────────
+    // Si el usuario refresca o cierra, loadData detectará is_finishing=true
+    // y lo notificará a los demás dispositivos.
+    await fetch("/api/inspections", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: currentInspection.id, is_finishing: true }),
+    }).catch(() => {}); // fire & forget — no bloquear si falla
 
     // ── Paso 1: jalar el estado más fresco de la DB antes de cerrar ──────────
     let freshFindings: Finding[] = allFindings;
@@ -481,14 +533,10 @@ Responde ÚNICAMENTE con un array JSON válido, sin texto adicional, sin markdow
 HALLAZGOS A ANALIZAR:
 ${findingsList}`;
 
-        const res1 = await fetch("/api/ai", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: prompt1 }),
-        });
+        const aiText1 = await callAIWithRetry(prompt1, 2);
 
-        if (res1.ok) {
-          const data1 = await res1.json();
+        if (aiText1) {
+          const data1 = { text: aiText1 };
           if (data1.text) {
             try {
               // Limpiar posibles backticks o markdown que Gemini pueda agregar
@@ -555,17 +603,10 @@ El resumen debe incluir:
 
 Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos especiales. Usa saltos de línea para separar secciones.`;
 
-        const res2 = await fetch("/api/ai", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: prompt2 }),
-        });
+        const aiText2 = await callAIWithRetry(prompt2, 2);
 
-        if (res2.ok) {
-          const data2 = await res2.json();
-          if (data2.text && data2.text.trim()) {
-            summary = data2.text.trim();
-          }
+        if (aiText2) {
+          summary = aiText2;
         }
       } catch { /* Prompt 2 falló — blindaje: usa el summary de fallback */ }
     }
@@ -628,6 +669,14 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
     setZones(finishedZones);
 
     setView("current");
+
+    } catch (e) {
+      // ── Blindaje externo: error inesperado — liberar el botón siempre ──────
+      console.error("[handleFinishInspection] error inesperado:", e);
+    } finally {
+      // Garantiza que isFinishing vuelva a false sin importar qué pasó
+      setIsFinishing(false);
+    }
   }
 
   async function handleCloseFinding(findingId: string, correctiveActions: string, closurePhotoUrl?: string) {
@@ -961,7 +1010,7 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
         />
       )}
 
-      {selectedZone && isInspectionActive && currentInspection && (
+      {selectedZone && isInspectionActive && currentInspection && !(currentInspection as any).is_finishing && (
         <InspectionModal
           zone={selectedZone}
           inspectionId={currentInspection.id}
@@ -974,21 +1023,27 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
             await handleZoneSave(zoneId, zoneName, status, checklistResults, findings);
           }}
           onFindingSaved={async (zoneId, inspectionId) => {
-            // Actualizar zone.status a ISSUE en memoria y en DB para reflejar el hallazgo
-            // sin esperar a que el usuario pulse "Validar Zona"
-            setZones(prev => {
-              const updated = prev.map(z =>
+            // Guard: no actualizar si el reporte ya se está generando
+            if ((currentInspection as any)?.is_finishing) return;
+
+            // 1. Actualizar zona a ISSUE en estado local (sin side effects en setter)
+            setZones(prev =>
+              prev.map(z =>
                 z.id === zoneId && z.status !== "ISSUE" ? { ...z, status: "ISSUE" as ZoneStatus } : z
-              );
-              // Persistir en background
-              fetch("/api/inspections", {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: inspectionId, zones_data: updated }),
-              }).catch(() => {});
-              return updated;
-            });
-            // Recargar allFindings para que los contadores sean correctos
+              )
+            );
+
+            // 2. Persistir zones_data actualizado en background (fuera del setter)
+            const updatedZones = zones.map(z =>
+              z.id === zoneId && z.status !== "ISSUE" ? { ...z, status: "ISSUE" as ZoneStatus } : z
+            );
+            fetch("/api/inspections", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: inspectionId, zones_data: updatedZones }),
+            }).catch(() => {});
+
+            // 3. Recargar allFindings para que los contadores sean correctos
             const finRes = await fetch("/api/findings");
             const finData = await finRes.json();
             setAllFindings(Array.isArray(finData) ? finData : []);
@@ -1012,6 +1067,31 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
           onClose={() => setViewFinding(null)}
           onImageZoom={setZoomImage}
         />
+      )}
+
+      {/* ── Banner: reporte en generación (dispositivos que no son el owner) ── */}
+      {isInspectionActive && (currentInspection as any)?.is_finishing && !isOwner && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur flex items-center justify-center z-[300] p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm border-4 border-blue-100 overflow-hidden">
+            <div className="p-6 bg-blue-50 border-b text-center">
+              <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                <div className="w-7 h-7 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              </div>
+              <h3 className="text-xl font-black text-slate-800">Generando reporte</h3>
+              <p className="text-slate-500 text-sm mt-2">
+                El usuario maestro está generando el reporte final de esta inspección. Por favor espera, la página se actualizará automáticamente cuando esté listo.
+              </p>
+            </div>
+            <div className="p-6">
+              <button
+                onClick={() => loadData()}
+                className="w-full py-3 bg-blue-600 text-white rounded-xl font-black text-xs uppercase hover:bg-blue-700 transition-all shadow-lg"
+              >
+                VERIFICAR ESTADO
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {zoomImage && (
