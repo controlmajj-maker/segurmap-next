@@ -32,6 +32,11 @@ export async function PUT(req: Request) {
   try {
     const body = await req.json();
 
+    // Asegurar que la columna is_finishing existe (migration automática segura)
+    await pool.query(
+      `ALTER TABLE inspections ADD COLUMN IF NOT EXISTS is_finishing BOOLEAN DEFAULT false`
+    );
+
     // If this is a finish request (is_active: false), check first that the
     // inspection is still active in DB — another device may have already closed it.
     if (body.is_active === false) {
@@ -45,8 +50,19 @@ export async function PUT(req: Request) {
     }
 
     const result = await pool.query(
-      "UPDATE inspections SET summary = COALESCE($1, summary), zones_data = COALESCE($2, zones_data), is_active = COALESCE($3, is_active) WHERE id = $4 RETURNING *",
-      [body.summary || null, body.zones_data ? JSON.stringify(body.zones_data) : null, body.is_active !== undefined ? body.is_active : null, body.id]
+      `UPDATE inspections
+       SET summary      = COALESCE($1, summary),
+           zones_data   = COALESCE($2, zones_data),
+           is_active    = COALESCE($3, is_active),
+           is_finishing = COALESCE($4, is_finishing)
+       WHERE id = $5 RETURNING *`,
+      [
+        body.summary || null,
+        body.zones_data ? JSON.stringify(body.zones_data) : null,
+        body.is_active !== undefined ? body.is_active : null,
+        body.is_finishing !== undefined ? body.is_finishing : null,
+        body.id,
+      ]
     );
     return NextResponse.json(result.rows[0]);
   } catch (error: any) {
