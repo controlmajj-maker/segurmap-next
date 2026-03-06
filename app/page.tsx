@@ -104,10 +104,10 @@ export default function SegurMapApp() {
     setIsLoading(true);
     setLoadError(false);
     try {
-      // Timeout de 10s por si la DB tarda o no responde (Vercel cold start, pool agotado)
+      // Timeout de 20s — Vercel cold start + DB connection puede tomar hasta 15s
       const fetchWithTimeout = (url: string) => {
         const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), 10000);
+        const id = setTimeout(() => controller.abort(), 20000);
         return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(id));
       };
 
