@@ -85,17 +85,22 @@ export async function DELETE(req: Request) {
   try {
     const { id } = await req.json();
     const row = await pool.query(
-      "SELECT photo_url, inspection_id, zone_id FROM findings WHERE id = $1",
+      "SELECT photo_url, closure_photo_url, inspection_id, zone_id FROM findings WHERE id = $1",
       [id]
     );
     const photoUrl: string | null = row.rows[0]?.photo_url ?? null;
+    const closurePhotoUrl: string | null = row.rows[0]?.closure_photo_url ?? null;
     const inspectionId: string | null = row.rows[0]?.inspection_id ?? null;
     const zoneId: string | null = row.rows[0]?.zone_id ?? null;
 
     await pool.query("DELETE FROM findings WHERE id = $1", [id]);
 
+    // Borrar ambas fotos del blob (evidencia original + foto de cierre)
     if (photoUrl) {
       try { await del(photoUrl); } catch { /* blob may not exist */ }
+    }
+    if (closurePhotoUrl) {
+      try { await del(closurePhotoUrl); } catch { /* blob may not exist */ }
     }
 
     return NextResponse.json({ success: true, inspection_id: inspectionId, zone_id: zoneId });
