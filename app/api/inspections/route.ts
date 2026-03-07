@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import pool from "../../../lib/db";
+import { del } from "@vercel/blob";
 
 export const dynamic = "force-dynamic";
 
@@ -73,8 +74,23 @@ export async function PUT(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const { id } = await req.json();
+
+    // Recuperar todas las fotos de los findings de esta inspección antes de borrarlos
+    const photosResult = await pool.query(
+      "SELECT photo_url, closure_photo_url FROM findings WHERE inspection_id = $1",
+      [id]
+    );
+    const photoUrls: string[] = photosResult.rows
+      .flatMap((r: any) => [r.photo_url, r.closure_photo_url])
+      .filter(Boolean);
+
+    // Borrar registros de DB
     await pool.query("DELETE FROM findings WHERE inspection_id = $1", [id]);
     await pool.query("DELETE FROM inspections WHERE id = $1", [id]);
+
+    // Borrar fotos del blob (fire & forget tolerante a errores)
+    await Promise.allSettled(photoUrls.map(url => del(url)));
+
     return NextResponse.json({ success: true });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
