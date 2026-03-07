@@ -824,15 +824,10 @@ Responde en texto plano en español, sin markdown, sin asteriscos, sin símbolos
     await fetch("/api/admin", { method: "DELETE" });
     setInspections([]);
     setAllFindings([]);
-    setZones(INITIAL_ZONES);
+    // No tocar zonas ni secciones — zones_config y sections_config se preservan en DB
+    // Las zonas en estado React también se preservan tal cual están
     setIsInspectionActive(false);
     setCurrentInspection(null);
-    // Reset zones_config in DB to initial zones
-    fetch("/api/config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ zones_config: JSON.stringify(INITIAL_ZONES) }),
-    }).catch(() => {});
   }
 
   async function handleDeleteInspection(id: string) {
